@@ -1,0 +1,145 @@
+/**
+ * 시뮬레이션 대본. 질문마다 지원자가 어떻게 행동하고 무엇을 말하는지 정해 두고,
+ * 리포트가 그 행동을 제대로 잡아내는지 확인하는 데 쓴다.
+ */
+import { QUESTION_PACKS } from '../data/questions';
+import type { SessionConfig } from '../types';
+import type { ScriptedAnswer } from './fakeRecognition';
+import { CALM, type Behavior } from './world';
+
+export interface Scenario {
+  id: string;
+  name: string;
+  description: string;
+  config: SessionConfig;
+  /** 질문 인덱스별 행동. 부족하면 마지막 것을 반복한다 */
+  behaviors: Behavior[];
+  /** 듣는 턴마다 순서대로 소비되는 답변 (꼬리질문 턴 포함) */
+  answers: ScriptedAnswer[];
+  /** 리포트에서 확인할 것들 (사람이 읽는 체크리스트) */
+  expectations: string[];
+}
+
+const common = QUESTION_PACKS[0].questions;
+
+const baseConfig = (questions: SessionConfig['questions'], over: Partial<SessionConfig> = {}): SessionConfig => ({
+  interviewerIds: ['seo', 'kang'],
+  questions,
+  allowFollowUps: true,
+  maxAnswerSec: 60,
+  silenceEndSec: 2.5,
+  useLlm: false,
+  apiKey: '',
+  ...over,
+});
+
+export const SCENARIOS: Scenario[] = [
+  {
+    id: 'basic',
+    name: '기본 3문항',
+    description: '1번 안정 → 2번 다리 떨기·아래 보기·작은 목소리 → 3번 너무 짧은 답 뒤 꼬리질문에 간투사 섞인 답',
+    config: baseConfig(common.slice(0, 3)),
+    behaviors: [
+      CALM,
+      { ...CALM, gaze: 'mixed', legShake: true, voice: 'quiet' },
+      { ...CALM, gaze: 'camera', fidget: true, tiltDeg: 8 },
+    ],
+    answers: [
+      {
+        text:
+          '네, 저는 데이터 분석을 전공한 지원자입니다. 학부 때 3년간 통계 프로젝트를 진행했고, 마지막 학기에는 팀 다섯 명을 이끌며 수요 예측 모델을 만들었습니다. ' +
+          '그 과정에서 예측 오차를 18퍼센트 줄인 것이 가장 큰 성과였습니다. 특히 팀원들과의 소통과 협업을 가장 중요하게 생각합니다. ' +
+          '이 경험을 바탕으로 데이터로 문제를 정의하고 해결하는 일을 하고 싶어 지원했습니다.',
+      },
+      {
+        text:
+          '제 강점은 데이터를 끝까지 파고드는 집요함입니다. 예를 들어 작년 프로젝트에서 이상치 원인을 찾기 위해 로그를 사흘 동안 추적해서 결국 센서 오류를 발견했습니다. ' +
+          '약점은 완벽을 추구하다 일정이 밀린 적이 있다는 점인데, 지금은 먼저 초안을 빠르게 만들고 다듬는 방식으로 보완하고 있습니다. ' +
+          '그 결과 최근 과제는 기한보다 이틀 먼저 제출했습니다.',
+        rate: 4.6,
+      },
+      { text: '네, 좋은 회사라서요.' },
+      {
+        text:
+          '어 그 저는 그러니까 이 회사가 데이터 쪽으로 유명해서 지원했습니다. 음 그리고 그리고 성장할 수 있을 것 같아서요. 관심 있던 분야이기도 하고요.',
+        rate: 4.2,
+        longPauseAfter: { 0: 2200, 1: 1900 },
+      },
+    ],
+    expectations: [
+      '1번 답변 구간: 시선·안정감·발성 모두 75 이상',
+      '2번 답변 구간: 안정감 50 미만(다리 떨림), 발성 50 미만(작은 목소리), 시선은 1번보다 낮음',
+      '2번 질문 중 "다리 떨림" 과 "목소리가 작습니다" 경고가 뜬다',
+      '3번: "답변이 지나치게 짧음" 이유로 꼬리질문, 합친 답변에서 간투사 4개·더듬음 1회·긴 침묵 2회',
+      '내용 점수: 1번 80 근처, 3번 40 미만',
+      '면접관 TTS 잔향(에코)은 받아쓰기에 섞이지 않는다',
+    ],
+  },
+  {
+    id: 'nudge',
+    name: '침묵과 얼굴 이탈',
+    description: '첫 질문에 14초 넘게 침묵해 재촉을 받은 뒤 대답. 답변 중 시선이 계속 옆을 향하고 얼굴이 자주 빠짐',
+    // 꼬리질문이 나오면 대본 턴이 밀리므로 이 시나리오에서는 끈다
+    config: baseConfig(common.slice(2, 4), { interviewerIds: ['han', 'oh'], silenceEndSec: 2, allowFollowUps: false }),
+    behaviors: [
+      { ...CALM, gaze: 'away', legsVisible: false },
+      { ...CALM, gaze: 'wander', selfTouch: true, neckRatio: 0.6, legsVisible: false },
+    ],
+    answers: [
+      {
+        text: '아, 네. 이 회사에 지원한 이유는 데이터 기반 의사결정 문화에 관심이 있었기 때문입니다. 실제로 인턴 경험에서 그 중요성을 배웠습니다.',
+        delayMs: 16500,
+      },
+      { text: '' },
+    ],
+    expectations: [
+      '첫 질문에서 면접관이 한 번 재촉하고, 그 뒤 답변이 인식된다',
+      '두 번째 질문은 침묵 → 두 번 재촉 후 다음으로 (꼬리질문 없음)',
+      '시선 점수 낮음(옆·방황), 몸짓 점수 낮음(얼굴 만지기·움츠림), 다리 지표는 "골반" 추정',
+    ],
+  },
+  {
+    id: 'good',
+    name: '모범 답변 5문항',
+    description: '전 구간 안정. 총점이 높고 경고가 없어야 정상',
+    config: baseConfig(common.slice(0, 5), { interviewerIds: ['han', 'moon'] }),
+    behaviors: [CALM],
+    answers: [
+      {
+        text:
+          '네, 저는 데이터 분석을 전공한 지원자입니다. 학부 때 3년간 통계 프로젝트를 진행했고, 마지막 학기에는 팀 다섯 명을 이끌며 수요 예측 모델을 만들었습니다. ' +
+          '그 과정에서 예측 오차를 18퍼센트 줄인 것이 가장 큰 성과였습니다. 특히 팀원들과의 소통과 협업을 가장 중요하게 생각합니다. ' +
+          '이 경험을 바탕으로 데이터로 문제를 정의하고 해결하는 일을 하고 싶어 지원했습니다.',
+      },
+      {
+        text:
+          '제 강점은 데이터를 끝까지 파고드는 집요함입니다. 예를 들어 작년 프로젝트에서 이상치 원인을 찾기 위해 로그를 사흘 동안 추적해서 결국 센서 오류를 발견했습니다. ' +
+          '약점은 완벽을 추구하다 일정이 밀린 적이 있다는 점인데, 지금은 먼저 초안을 빠르게 만들고 다듬는 방식으로 보완하고 있습니다. ' +
+          '그 결과 최근 과제는 기한보다 이틀 먼저 제출했습니다.',
+      },
+      {
+        text:
+          '지원 동기는 두 가지입니다. 첫째, 이 회사가 데이터로 의사결정하는 문화를 실제로 운영하고 있다는 점에 관심이 있었습니다. ' +
+          '둘째, 인턴 경험에서 예측 모델을 현업에 적용해 재고 비용을 12퍼센트 줄인 적이 있는데, 그 일을 더 큰 규모로 해보고 싶다는 목표가 생겼습니다. ' +
+          '결과적으로 제 역량으로 가장 크게 기여할 수 있는 곳이라고 판단해 지원했습니다.',
+      },
+      {
+        text:
+          '작년 캡스톤 프로젝트 당시 팀에서 일정 문제로 갈등이 있었습니다. 저는 먼저 각자의 입장을 듣고 소통 창구를 하나로 모았습니다. ' +
+          '그다음 역할을 다시 나누고 주 2회 점검 회의를 도입해 조율했습니다. 서로 맡은 역할이 분명해지자 불만이 줄었고, ' +
+          '결과적으로 2주 앞당겨 마감했고 갈등도 해결했습니다. 그 뒤로는 팀 프로젝트를 시작할 때 역할과 일정 합의를 먼저 합니다.',
+      },
+      {
+        text:
+          '가장 실패했던 경험은 첫 인턴 때 검증 없이 모델을 배포해 하루 동안 잘못된 추천이 나간 일입니다. ' +
+          '그때 배운 점은 작은 변경도 반드시 검증 단계를 거쳐야 한다는 것이었고, 이후에는 배포 전 체크리스트를 만들어 같은 실수를 개선했습니다. ' +
+          '그 교훈 덕분에 다음 프로젝트에서는 장애가 한 번도 없었고, 지금도 무언가를 내보내기 전에는 반드시 두 번 확인하는 습관이 남아 있습니다.',
+      },
+    ],
+    expectations: ['총점 80 이상, 경고 없음, 5개 답변 모두 내용 65 이상', '꼬리질문은 나오지 않아야 정상 (모두 사례·길이·연관성 충족)'],
+  },
+];
+
+export function getScenario(id: string): Scenario {
+  return SCENARIOS.find((s) => s.id === id) ?? SCENARIOS[0];
+}

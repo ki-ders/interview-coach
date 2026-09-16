@@ -1,0 +1,805 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type {
+  AnswerRecord,
+  Interviewer,
+  LiveAlert,
+  LiveMetrics,
+  MetricKey,
+  SessionConfig,
+  SessionReport,
+} from '../types';
+import { getInterviewer } from '../data/interviewers';
+import { loadLandmarkers, type Landmarkers } from '../vision/landmarkers';
+import { CalibrationCollector, DEFAULT_CALIBRATION, VisionAnalyzer, type VisionDebug } from '../vision/analyzer';
+import { MicAnalyzer } from '../audio/micAnalyzer';
+import { createStt } from '../audio/createStt';
+import type { SttEngine } from '../audio/stt';
+import { Tts } from '../audio/tts';
+import {
+  buildBreakdown,
+  computeMetrics,
+  derive,
+  emptyStats,
+  emptyText,
+  feed,
+  sealStats,
+  textStatsOf,
+  type RawStats,
+  type Sample,
+} from '../scoring/metrics';
+import { analyzeRelevance, analyzeSpeech } from '../scoring/korean';
+import { ackOf, closingOf, decideFollowUp, greetingOf, silenceNudgeOf, summarizeContent } from './brain';
+import { askInterviewerLlm } from './llm';
+import { clamp, gradeOf, weighted } from '../lib/signal';
+import { startTicker } from '../lib/ticker';
+
+export type Phase = 'idle' | 'loading' | 'calibrating' | 'ready' | 'running' | 'report' | 'error';
+
+export type AvatarState = 'idle' | 'speaking' | 'listening' | 'writing' | 'nodding';
+
+export type CalibStep = 'noise' | 'center' | 'side' | 'down' | 'done';
+
+export interface Subtitle {
+  speakerId: string;
+  text: string;
+  isQuestion: boolean;
+}
+
+const WINDOW_MS = 12000;
+const ALERT_COOLDOWN_MS = 14000;
+
+const ALERT_TEXT: Record<MetricKey, string> = {
+  gaze: '시선이 자꾸 다른 곳을 향합니다. 카메라를 보세요.',
+  gesture: '자세가 흐트러졌습니다. 어깨를 펴고 앉아 보세요.',
+  speech: '말이 자주 끊깁니다. 천천히 문장을 이어가 보세요.',
+  voice: '목소리가 작습니다. 조금 더 크게 말해 주세요.',
+  calm: '다리 떨림이 감지됐습니다. 두 발을 바닥에 붙여 보세요.',
+};
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/** 값이 생길 때까지 짧게 기다린다 (렌더 타이밍 경합 방지) */
+async function waitFor<T>(get: () => T | null, timeoutMs: number): Promise<T | null> {
+  const until = performance.now() + timeoutMs;
+  for (;;) {
+    const v = get();
+    if (v) return v;
+    if (performance.now() > until) return null;
+    await sleep(30);
+  }
+}
+
+export interface SessionState {
+  phase: Phase;
+  loadingMessage: string;
+  error: string | null;
+  calibStep: CalibStep;
+  calibCountdown: number;
+  live: LiveMetrics;
+  micLevel: number;
+  alerts: LiveAlert[];
+  subtitle: Subtitle | null;
+  avatars: Record<string, AvatarState>;
+  transcript: string;
+  interim: string;
+  questionIndex: number;
+  totalQuestions: number;
+  elapsedSec: number;
+  report: SessionReport | null;
+  debug: VisionDebug | null;
+  sttSupported: boolean;
+  notice: string | null;
+  faceVisible: boolean;
+}
+
+const INITIAL_LIVE: LiveMetrics = { gaze: 70, gesture: 70, speech: 70, voice: 70, calm: 70 };
+
+/**
+ * 세션이 바깥 세상과 닿는 지점. 기본값은 실제 카메라·마이크·MediaPipe·Web Speech 이고,
+ * 시뮬레이션 모드(?sim=1)는 합성 영상·음성·인식기를 꽂아 카메라 없이 전체 흐름을 돌린다.
+ */
+export interface SessionDeps {
+  getUserMedia(constraints: MediaStreamConstraints): Promise<MediaStream>;
+  loadLandmarkers(onProgress?: (msg: string) => void): Promise<Landmarkers>;
+  createStt(): SttEngine;
+  createTts(): Tts;
+}
+
+export const defaultDeps: SessionDeps = {
+  getUserMedia: (c) => navigator.mediaDevices.getUserMedia(c),
+  loadLandmarkers,
+  createStt,
+  createTts: () => new Tts(),
+};
+
+const initialState = (): SessionState => ({
+  phase: 'idle',
+  loadingMessage: '',
+  error: null,
+  calibStep: 'noise',
+  calibCountdown: 0,
+  live: INITIAL_LIVE,
+  micLevel: 0,
+  alerts: [],
+  subtitle: null,
+  avatars: {},
+  transcript: '',
+  interim: '',
+  questionIndex: 0,
+  totalQuestions: 0,
+  elapsedSec: 0,
+  report: null,
+  debug: null,
+  sttSupported: true,
+  notice: null,
+  faceVisible: true,
+});
+
+export function useSession(deps: SessionDeps = defaultDeps) {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [state, setState] = useState<SessionState>(initialState);
+  // 첫 렌더에 한 번만 만든다
+  const [stt] = useState(() => deps.createStt());
+  const [tts] = useState(() => deps.createTts());
+
+  const mountedRef = useRef(true);
+  const patch = useCallback((p: Partial<SessionState>) => {
+    if (!mountedRef.current) return;
+    setState((s) => ({ ...s, ...p }));
+  }, []);
+
+  /* ── 장기 보존 참조 ────────────────────────────────────────── */
+  const streamRef = useRef<MediaStream | null>(null);
+  const marksRef = useRef<Landmarkers | null>(null);
+  const visionRef = useRef(new VisionAnalyzer());
+  const micRef = useRef(new MicAnalyzer());
+  const sttRef = useRef(stt);
+  const ttsRef = useRef(tts);
+  const stopTickerRef = useRef<(() => void) | null>(null);
+  const abortRef = useRef(false);
+  const configRef = useRef<SessionConfig | null>(null);
+
+  const startedAtRef = useRef(0);
+  const lastFrameRef = useRef(0);
+  const lastVideoTimeRef = useRef(-1);
+  const sessionStatsRef = useRef<RawStats>(emptyStats());
+  const answerStatsRef = useRef<RawStats | null>(null);
+  const windowRef = useRef<Sample[]>([]);
+  const timelineRef = useRef<{ t: number; metrics: LiveMetrics }[]>([]);
+  const alertsRef = useRef<LiveAlert[]>([]);
+  const lastAlertAtRef = useRef<Record<MetricKey, number>>({
+    gaze: 0,
+    gesture: 0,
+    speech: 0,
+    voice: 0,
+    calm: 0,
+  });
+  const alertSeq = useRef(0);
+  const lastTickRef = useRef(0);
+
+  const answeringRef = useRef(false);
+  const lastUserVoiceRef = useRef(0);
+  const heardSpeechRef = useRef(false);
+  const heardAtRef = useRef(0);
+  const speechRunStartRef = useRef(0);
+  const ttsEndedAtRef = useRef(0);
+
+  const calibRef = useRef({ collector: new CalibrationCollector(), active: false });
+  const answersRef = useRef<AnswerRecord[]>([]);
+  const speakHandleRef = useRef<{ cancel(): void } | null>(null);
+
+  const releaseMedia = useCallback(() => {
+    stopTickerRef.current?.();
+    stopTickerRef.current = null;
+    micRef.current.detach();
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+    streamRef.current = null;
+    if (videoRef.current) videoRef.current.srcObject = null;
+  }, []);
+
+  const teardown = useCallback(() => {
+    abortRef.current = true;
+    speakHandleRef.current?.cancel();
+    ttsRef.current.stop();
+    sttRef.current.dispose();
+    releaseMedia();
+    marksRef.current = null;
+  }, [releaseMedia]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      teardown();
+    };
+  }, [teardown]);
+
+  /* ── 측정 루프 ─────────────────────────────────────────────── */
+  const updateLive = useCallback((win: Sample[], t: number, micLevel: number) => {
+    const windowStats = emptyStats();
+    let prev = win.length ? win[0].t : 0;
+    for (const s of win) {
+      feed(windowStats, s, s.t - prev);
+      prev = s.t;
+    }
+    sealStats(windowStats);
+    const d = derive(windowStats);
+    const metrics = computeMetrics(d, emptyText());
+
+    const now = performance.now();
+    let newAlert: LiveAlert | null = null;
+    if (t > 14000) {
+      const keys: MetricKey[] = ['voice', 'calm', 'gaze', 'gesture', 'speech'];
+      for (const k of keys) {
+        if (k === 'voice' && !d.voiceAvailable) continue;
+        // 말투 경고는 답변 중, 그것도 한마디라도 한 뒤에만 (생각하는 몇 초를 "끊김"으로 몰지 않게)
+        if (k === 'speech' && (!answeringRef.current || !heardSpeechRef.current)) continue;
+        if ((k === 'gesture' || k === 'calm') && !d.poseAvailable) continue;
+        if (metrics[k] < 45 && now - lastAlertAtRef.current[k] > ALERT_COOLDOWN_MS) {
+          lastAlertAtRef.current[k] = now;
+          // 끊김이 아니라 침묵이 긴 경우는 다른 말을 해야 한다
+          const text =
+            k === 'speech' && d.voiceRatio < 0.3
+              ? '침묵이 길어지고 있습니다. 결론부터 짧게 말해 보세요.'
+              : ALERT_TEXT[k];
+          newAlert = { id: ++alertSeq.current, key: k, text, t };
+          break;
+        }
+      }
+    }
+    if (newAlert) alertsRef.current = [...alertsRef.current, newAlert].slice(-6);
+
+    const timeline = timelineRef.current;
+    if (!timeline.length || t - timeline[timeline.length - 1].t > 2000) {
+      timeline.push({ t, metrics });
+    }
+
+    if (!mountedRef.current) return;
+    setState((s) => ({
+      ...s,
+      // 답변 중이 아니면 음성 지표는 직전 값을 유지한다 (면접관이 말하는 동안 요동치지 않도록)
+      live: d.voiceAvailable ? metrics : { ...metrics, voice: s.live.voice, speech: s.live.speech },
+      micLevel,
+      elapsedSec: Math.floor(t / 1000),
+      debug: { ...visionRef.current.debug },
+      faceVisible: d.faceCoverage > 0.35,
+      alerts: newAlert ? alertsRef.current.slice(-3) : s.alerts,
+    }));
+  }, []);
+
+  const startLoop = useCallback(() => {
+    const vision = visionRef.current;
+    const mic = micRef.current;
+    const tts = ttsRef.current;
+
+    const tick = () => {
+      const video = videoRef.current;
+      const marks = marksRef.current;
+      if (!video || !marks || video.readyState < 2) return;
+
+      // rAF(보통 60Hz)가 카메라(보통 30fps)보다 빠르다. 새 프레임이 없는 틱을 집계하면
+      // 그 틱이 "얼굴 없음"으로 잡혀 감지율이 반토막 나므로 새 프레임일 때만 처리한다.
+      if (video.currentTime === lastVideoTimeRef.current) return;
+      lastVideoTimeRef.current = video.currentTime;
+
+      const now = performance.now();
+      const t = now - startedAtRef.current;
+      const dt = lastFrameRef.current ? now - lastFrameRef.current : 33;
+      lastFrameRef.current = now;
+
+      let faceSample = null;
+      let poseSample = null;
+      vision.tickFps(now);
+      try {
+        const faceResult = marks.face.detectForVideo(video, now);
+        if (calibRef.current.active) calibRef.current.collector.add(faceResult);
+        faceSample = vision.face(faceResult);
+        poseSample = vision.pose(marks.pose.detectForVideo(video, now), now);
+      } catch {
+        /* 간헐적 추론 실패는 건너뛴다 */
+      }
+
+      const micFrame = mic.read(now);
+      const ttsActive = tts.speaking;
+      if (ttsActive) ttsEndedAtRef.current = now;
+      // TTS 직후 700ms 는 스피커 잔향과 발화 판정 히스테리시스 꼬리가 남아 있어 무시한다
+      const echoGuard = now - ttsEndedAtRef.current < 700;
+      const userSpeaking = micFrame.speaking && !ttsActive && !echoGuard;
+      if (userSpeaking) {
+        lastUserVoiceRef.current = now;
+        if (!speechRunStartRef.current) speechRunStartRef.current = now;
+        // 순간적인 잡음·잔향이 아니라 0.35초 넘게 이어질 때만 "답변을 시작했다"로 본다.
+        // 안 그러면 생각하는 몇 초 사이에 침묵 종료가 걸려 다음 질문으로 넘어가 버린다.
+        if (now - speechRunStartRef.current > 350 && !heardSpeechRef.current) {
+          heardSpeechRef.current = true;
+          heardAtRef.current = speechRunStartRef.current;
+        }
+      } else {
+        speechRunStartRef.current = 0;
+      }
+
+      const sample: Sample = {
+        t,
+        face: faceSample,
+        pose: poseSample,
+        snr: micFrame.snr,
+        speaking: userSpeaking,
+        ttsActive,
+        answering: answeringRef.current,
+      };
+
+      feed(sessionStatsRef.current, sample, dt);
+      if (answerStatsRef.current) feed(answerStatsRef.current, sample, dt);
+
+      const win = windowRef.current;
+      win.push(sample);
+      while (win.length && t - win[0].t > WINDOW_MS) win.shift();
+
+      if (now - lastTickRef.current > 250) {
+        lastTickRef.current = now;
+        updateLive(win, t, micFrame.level);
+      }
+    };
+
+    stopTickerRef.current?.();
+    stopTickerRef.current = startTicker(tick);
+  }, [updateLive]);
+
+  /* ── 준비: 권한 + 모델 로딩 ────────────────────────────────── */
+  const prepare = useCallback(
+    async (config: SessionConfig): Promise<boolean> => {
+      configRef.current = config;
+      abortRef.current = false;
+      // 버튼 탭의 사용자 제스처가 살아 있을 때 오디오 컨텍스트를 만들어 둔다 (iOS Safari)
+      micRef.current.prime();
+      patch({ phase: 'loading', error: null, loadingMessage: '카메라와 마이크 권한을 확인합니다…' });
+
+      try {
+        const stream = await deps.getUserMedia({
+          video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
+          audio: { echoCancellation: true, noiseSuppression: false, autoGainControl: false },
+        });
+        streamRef.current = stream;
+        // 화면 전환 직후라 <video> 가 아직 붙지 않았을 수 있다
+        const video = await waitFor(() => videoRef.current, 3000);
+        if (!video) throw new Error('영상 요소를 준비하지 못했습니다.');
+        video.srcObject = stream;
+        await video.play().catch(() => undefined);
+
+        await micRef.current.attach(stream);
+        await ttsRef.current.init();
+        marksRef.current = await deps.loadLandmarkers((msg) => patch({ loadingMessage: msg }));
+
+        const stt = sttRef.current;
+        stt.onUpdate = (snap) => patch({ transcript: snap.final, interim: snap.interim });
+        stt.onFatal = (reason) => patch({ notice: reason });
+
+        startedAtRef.current = performance.now();
+        lastFrameRef.current = 0;
+        lastVideoTimeRef.current = -1;
+        windowRef.current = [];
+        visionRef.current.reset();
+        startLoop();
+
+        patch({
+          sttSupported: stt.supported,
+          notice: stt.supported
+            ? ttsRef.current.hasKoreanVoice
+              ? null
+              : '이 기기에 한국어 음성이 없어 면접관 목소리 대신 자막으로 진행합니다.'
+            : '이 브라우저는 음성 인식을 지원하지 않습니다. Chrome 또는 Edge 에서 열면 말투·내용 평가까지 받을 수 있습니다.',
+        });
+        return true;
+      } catch (err) {
+        const msg =
+          err instanceof DOMException && (err.name === 'NotAllowedError' || err.name === 'SecurityError')
+            ? '카메라/마이크 권한이 거부되었습니다. 주소창의 권한 아이콘에서 허용한 뒤 다시 시도해 주세요.'
+            : err instanceof DOMException && err.name === 'NotFoundError'
+              ? '카메라 또는 마이크를 찾을 수 없습니다. 장치 연결을 확인해 주세요.'
+              : `준비 중 오류가 발생했습니다: ${err instanceof Error ? err.message : String(err)}`;
+        patch({ phase: 'error', error: msg });
+        return false;
+      }
+    },
+    [deps, patch, startLoop],
+  );
+
+  /* ── 시선 보정 ─────────────────────────────────────────────── */
+  const runCalibration = useCallback(async () => {
+    const vision = visionRef.current;
+    const mic = micRef.current;
+    vision.calibration = { ...DEFAULT_CALIBRATION };
+
+    const collect = async (step: CalibStep, seconds: number) => {
+      calibRef.current.collector.reset();
+      calibRef.current.active = true;
+      for (let i = seconds; i > 0; i--) {
+        patch({ calibStep: step, calibCountdown: i });
+        await sleep(1000);
+        if (abortRef.current) return null;
+      }
+      calibRef.current.active = false;
+      return calibRef.current.collector.median();
+    };
+
+    patch({ phase: 'calibrating' });
+
+    mic.startNoiseCalibration();
+    for (let i = 3; i > 0; i--) {
+      patch({ calibStep: 'noise', calibCountdown: i });
+      await sleep(1000);
+      if (abortRef.current) return false;
+    }
+    mic.finishNoiseCalibration();
+
+    const center = await collect('center', 3);
+    if (abortRef.current) return false;
+    const side = await collect('side', 2);
+    if (abortRef.current) return false;
+    const down = await collect('down', 2);
+    if (abortRef.current) return false;
+
+    if (center) {
+      vision.calibration = {
+        centerX: center.x,
+        centerY: center.y,
+        spanX: side ? side.x - center.x : DEFAULT_CALIBRATION.spanX,
+        spanY: down ? down.y - center.y : DEFAULT_CALIBRATION.spanY,
+        calibrated: true,
+      };
+    } else {
+      patch({
+        notice: '얼굴을 인식하지 못해 기본값으로 진행합니다. 조명을 밝게 하고 카메라 정면에 앉아 주세요.',
+      });
+    }
+
+    patch({ calibStep: 'done', phase: 'ready' });
+    return true;
+  }, [patch]);
+
+  /* ── 발화 / 청취 ───────────────────────────────────────────── */
+  const setAvatars = useCallback(
+    (activeId: string, activeState: AvatarState, otherState: AvatarState = 'listening') => {
+      const cfg = configRef.current;
+      if (!cfg) return;
+      const out: Record<string, AvatarState> = {};
+      for (const id of cfg.interviewerIds) out[id] = id === activeId ? activeState : otherState;
+      patch({ avatars: out });
+    },
+    [patch],
+  );
+
+  const speak = useCallback(
+    async (text: string, who: Interviewer, isQuestion = false) => {
+      if (abortRef.current) return;
+      const stt = sttRef.current;
+      stt.gated = true;
+      patch({ subtitle: { speakerId: who.id, text, isQuestion } });
+      setAvatars(who.id, 'speaking');
+      // 인식기가 면접관 목소리를 받아 적으면 그 문장과 비슷한 결과를 버리도록 알려둔다
+      stt.ignoreText = text;
+      const handle = ttsRef.current.speak(text, who);
+      speakHandleRef.current = handle;
+      await handle.done;
+      speakHandleRef.current = null;
+      ttsEndedAtRef.current = performance.now();
+      // 게이트는 여기서 풀지 않는다 — 인식 결과가 늦게 도착하므로 listenForAnswer 가 잠시 뒤에 연다
+    },
+    [patch, setAvatars],
+  );
+
+  const micGateSeq = useRef(0);
+  /** TTS 잔향과 늦게 도착하는 인식 결과를 흘려보낸 뒤 마이크(STT)를 연다 */
+  const openMicSoon = useCallback((delayMs = 700) => {
+    const seq = ++micGateSeq.current;
+    window.setTimeout(() => {
+      if (seq !== micGateSeq.current) return; // 그 사이 다시 말하기 시작했다
+      if (ttsRef.current.speaking || abortRef.current) return;
+      sttRef.current.gated = false;
+    }, delayMs);
+  }, []);
+
+  const listenForAnswer = useCallback(
+    async (
+      asker: Interviewer,
+    ): Promise<{ text: string; stats: RawStats; durationSec: number; latencySec: number }> => {
+      const cfg = configRef.current!;
+      const stt = sttRef.current;
+      const stats = emptyStats();
+      answerStatsRef.current = stats;
+
+      patch({ subtitle: null });
+      setAvatars(asker.id, 'listening', 'writing');
+
+      stt.beginTurn();
+      stt.start();
+      openMicSoon();
+      heardSpeechRef.current = false;
+      lastUserVoiceRef.current = performance.now();
+      answeringRef.current = true;
+
+      const start = performance.now();
+      let nudges = 0;
+      let lastNudge = start;
+      let lastShuffle = start;
+
+      while (!abortRef.current) {
+        await sleep(200);
+        const now = performance.now();
+        const elapsed = (now - start) / 1000;
+        const sinceVoice = (now - lastUserVoiceRef.current) / 1000;
+
+        if (elapsed > cfg.maxAnswerSec) break;
+
+        // 면접관들이 듣는 동안 자연스럽게 메모하거나 끄덕인다
+        if (now - lastShuffle > 3500 + Math.random() * 3000) {
+          lastShuffle = now;
+          const roll = Math.random();
+          const askerState: AvatarState = roll < 0.45 ? 'writing' : roll < 0.7 ? 'nodding' : 'listening';
+          const otherState: AvatarState = Math.random() < 0.55 ? 'writing' : 'listening';
+          setAvatars(asker.id, askerState, otherState);
+        }
+
+        if (!heardSpeechRef.current) {
+          if (now - lastNudge > 14000 && nudges < 2) {
+            nudges++;
+            lastNudge = now;
+            answeringRef.current = false;
+            await speak(silenceNudgeOf(asker), asker);
+            answeringRef.current = true;
+            lastUserVoiceRef.current = performance.now();
+            openMicSoon();
+            patch({ subtitle: null });
+            setAvatars(asker.id, 'listening', 'writing');
+          } else if (nudges >= 2 && now - lastNudge > 12000) {
+            break;
+          }
+          continue;
+        }
+
+        if (sinceVoice > cfg.silenceEndSec) break;
+      }
+
+      answeringRef.current = false;
+      answerStatsRef.current = null;
+      stt.stop();
+      sealStats(stats);
+      const durationSec = (performance.now() - start) / 1000;
+      // 첫 마디까지 걸린 시간. 한마디도 없었으면 답변 시간 전체를 "기다린 시간"으로 본다
+      const latencySec = heardSpeechRef.current ? Math.max(0, (heardAtRef.current - start) / 1000) : durationSec;
+      return { text: stt.endTurn(), stats, durationSec, latencySec };
+    },
+    [openMicSoon, patch, setAvatars, speak],
+  );
+
+  /* ── 결과 산출 ─────────────────────────────────────────────── */
+  const finish = useCallback(() => {
+    const cfg = configRef.current;
+    answeringRef.current = false;
+    sttRef.current.stop();
+    ttsRef.current.stop();
+
+    const stats = sessionStatsRef.current;
+    sealStats(stats);
+    const d = derive(stats);
+    const answers = answersRef.current;
+    const text = textStatsOf(answers);
+    const metrics = computeMetrics(d, text);
+    const breakdown = buildBreakdown(d, text, metrics);
+    const content = summarizeContent(answers);
+
+    const strictness = cfg
+      ? (getInterviewer(cfg.interviewerIds[0]).strictness + getInterviewer(cfg.interviewerIds[1]).strictness) / 2
+      : 1;
+
+    // 음성 인식이 안 되는 브라우저에서는 내용 점수를 총점에 넣지 않는다 (NaN 은 가중 평균에서 빠진다)
+    const contentScore = sttRef.current.supported ? content.score : NaN;
+    const rawTotal = weighted([
+      [metrics.gaze, 0.2],
+      [metrics.gesture, 0.18],
+      [metrics.speech, 0.22],
+      [metrics.voice, 0.15],
+      [metrics.calm, 0.15],
+      [contentScore, 0.1],
+    ]);
+    // 엄격한 면접관일수록 같은 수행에 더 낮은 점수를 준다
+    const total = clamp(Math.round(50 + (rawTotal - 50) * (2 - strictness)), 0, 100);
+
+    const report: SessionReport = {
+      total,
+      grade: gradeOf(total),
+      breakdown,
+      content: {
+        score: content.score,
+        summary: content.summary,
+        perAnswer: answers.map((a) => ({
+          question: a.questionText,
+          relevance: a.relevance.score,
+          note: a.relevance.note,
+        })),
+      },
+      answers,
+      timeline: timelineRef.current,
+      durationSec: stats.ms / 1000,
+      alerts: alertsRef.current,
+    };
+
+    releaseMedia();
+    if (!mountedRef.current) return;
+    setState((s) => ({ ...s, phase: 'report', report, subtitle: null, avatars: {} }));
+  }, [releaseMedia]);
+
+  /* ── 면접 진행 ─────────────────────────────────────────────── */
+  const start = useCallback(async () => {
+    const cfg = configRef.current;
+    if (!cfg) return;
+    abortRef.current = false;
+    answersRef.current = [];
+    sessionStatsRef.current = emptyStats();
+    timelineRef.current = [];
+    alertsRef.current = [];
+    windowRef.current = [];
+    startedAtRef.current = performance.now();
+    lastFrameRef.current = 0;
+
+    const a = getInterviewer(cfg.interviewerIds[0]);
+    const b = getInterviewer(cfg.interviewerIds[1]);
+    const pair = [a, b];
+
+    patch({ phase: 'running', questionIndex: 0, totalQuestions: cfg.questions.length });
+
+    try {
+      await speak(greetingOf(a), a);
+      if (!abortRef.current && b.id !== a.id) {
+        await sleep(300);
+        await speak(`저는 ${b.name}입니다. 함께 듣겠습니다.`, b);
+      }
+
+      for (let i = 0; i < cfg.questions.length; i++) {
+        if (abortRef.current) break;
+        const q = cfg.questions[i];
+        const asker = pair[i % 2];
+        patch({ questionIndex: i });
+
+        await speak(q.text, asker, true);
+        if (abortRef.current) break;
+
+        const askedAt = performance.now();
+        const first = await listenForAnswer(asker);
+        if (abortRef.current) break;
+
+        setAvatars(asker.id, 'writing', 'writing');
+
+        const speech = analyzeSpeech(first.text, {
+          totalSec: first.durationSec,
+          voicedSec: first.stats.voicedMs / 1000,
+          pauseCount: first.stats.pauseCount,
+          longPauses: first.stats.longPauses,
+        });
+        let relevance = analyzeRelevance(q, first.text);
+        let followUpText: string | null = null;
+        let followUpReason: string | null = null;
+
+        const llmPromise =
+          cfg.useLlm && cfg.apiKey && first.text.length > 5
+            ? askInterviewerLlm({
+                apiKey: cfg.apiKey,
+                who: asker,
+                question: q,
+                answer: first.text,
+                previous: answersRef.current.map((r) => ({
+                  question: r.questionText,
+                  answer: r.transcript,
+                })),
+              })
+            : Promise.resolve(null);
+
+        // 메모하는 시간 동안 평가가 끝나도록 기다린다
+        const [llm] = await Promise.all([llmPromise, sleep(1600 + Math.random() * 1400)]);
+        if (abortRef.current) break;
+
+        if (llm) {
+          relevance = {
+            ...relevance,
+            score: Math.round((relevance.score + llm.relevance) / 2),
+            note: llm.note || relevance.note,
+          };
+          if (llm.followUp) {
+            followUpText = llm.followUp;
+            followUpReason = '면접관이 답변을 듣고 되물음';
+          }
+        }
+
+        // 한마디도 없었으면 되물어도 소용없다 — 그냥 다음 질문으로
+        if (!followUpText && cfg.allowFollowUps && first.text.trim().length > 0) {
+          const decision = decideFollowUp(asker, q, relevance, speech, false);
+          followUpText = decision.text;
+          followUpReason = decision.reason || null;
+        }
+
+        let mergedText = first.text;
+        let mergedDuration = first.durationSec;
+        const mergedStats = first.stats;
+
+        if (followUpText && cfg.allowFollowUps && !abortRef.current) {
+          await speak(followUpText, asker);
+          const second = await listenForAnswer(asker);
+          if (!abortRef.current) {
+            mergedText = `${first.text} ${second.text}`.trim();
+            mergedDuration += second.durationSec;
+            mergeStats(mergedStats, second.stats);
+            relevance = analyzeRelevance(q, mergedText);
+          }
+          setAvatars(asker.id, 'writing', 'writing');
+        }
+
+        const voicedSec = mergedStats.voicedMs / 1000;
+        const finalSpeech = analyzeSpeech(mergedText, {
+          totalSec: mergedDuration,
+          voicedSec,
+          pauseCount: mergedStats.pauseCount,
+          longPauses: mergedStats.longPauses,
+        });
+
+        const answerDerived = derive(mergedStats);
+        answersRef.current.push({
+          questionId: q.id,
+          questionText: q.text,
+          transcript: mergedText,
+          durationSec: mergedDuration,
+          voicedSec,
+          latencySec: first.latencySec,
+          startedAt: askedAt - startedAtRef.current,
+          endedAt: performance.now() - startedAtRef.current,
+          speech: finalSpeech,
+          relevance,
+          metrics: computeMetrics(
+            answerDerived,
+            textStatsOf([{ speech: finalSpeech, voicedSec, latencySec: first.latencySec }]),
+          ),
+          followUpAsked: followUpText,
+          followUpReason,
+        });
+
+        if (!abortRef.current) {
+          setAvatars(asker.id, 'nodding');
+          // 한마디도 없었는데 "잘 들었습니다" 라고 하면 이상하다
+          await speak(mergedText.trim() ? ackOf(asker) : '네, 그럼 다음 질문으로 넘어가겠습니다.', asker);
+        }
+      }
+
+      if (!abortRef.current) await speak(closingOf(pair[0]), pair[0]);
+    } finally {
+      finish();
+    }
+  }, [finish, listenForAnswer, patch, setAvatars, speak]);
+
+  const abort = useCallback(() => {
+    abortRef.current = true;
+    speakHandleRef.current?.cancel();
+    ttsRef.current.stop();
+  }, []);
+
+  const reset = useCallback(() => {
+    teardown();
+    visionRef.current.reset();
+    abortRef.current = false;
+    if (mountedRef.current) setState(initialState());
+  }, [teardown]);
+
+  return { state, videoRef, prepare, runCalibration, start, abort, reset };
+}
+
+/* ── 헬퍼 ─────────────────────────────────────────────────────── */
+
+/** 꼬리 질문까지 포함해 한 문항의 통계를 합친다 */
+function mergeStats(target: RawStats, extra: RawStats) {
+  const keys = [
+    'ms', 'faceMs', 'noFaceMs', 'onTargetMs', 'downMs', 'gazeSum', 'gazeSqSum', 'gazeN', 'blinks',
+    'poseMs', 'tiltSum', 'neckSum', 'swaySum', 'handSum', 'poseN', 'selfTouchMs', 'legShakeSum',
+    'legShakeMs', 'legN', 'handFidgetSum', 'voicedMs', 'answerMs', 'snrSum', 'snrSqSum', 'snrN',
+    'weakMs', 'trailingDropSum', 'utteranceCount', 'pauseCount', 'longPauses',
+  ] as const;
+  for (const k of keys) target[k] += extra[k];
+}
+
