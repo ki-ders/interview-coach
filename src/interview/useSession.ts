@@ -29,7 +29,8 @@ import {
 } from '../scoring/metrics';
 import { analyzeRelevance, analyzeSpeech } from '../scoring/korean';
 import { ackOf, closingOf, decideFollowUp, greetingOf, silenceNudgeOf, summarizeContent } from './brain';
-import { askInterviewerLlm } from './llm';
+import { decideTurnPolicy } from './turn';
+import { createInterviewerLlm, type InterviewerLlm } from './llm';
 import { clamp, gradeOf, weighted } from '../lib/signal';
 import { startTicker } from '../lib/ticker';
 
@@ -90,6 +91,10 @@ export interface SessionState {
   sttSupported: boolean;
   notice: string | null;
   faceVisible: boolean;
+  /** 답변 종료 판단 상태 ("말이 이어질 것 같아 기다리는 중" 등). 듣는 중이 아니면 null */
+  turnHint: string | null;
+  /** 리포트가 뜬 뒤 LLM 총평을 기다리는 중 */
+  llmSummaryPending: boolean;
 }
 
 const INITIAL_LIVE: LiveMetrics = { gaze: 70, gesture: 70, speech: 70, voice: 70, calm: 70 };
@@ -103,6 +108,7 @@ export interface SessionDeps {
   loadLandmarkers(onProgress?: (msg: string) => void): Promise<Landmarkers>;
   createStt(): SttEngine;
   createTts(): Tts;
+  createLlm(config: SessionConfig): Promise<InterviewerLlm | null>;
 }
 
 export const defaultDeps: SessionDeps = {
@@ -110,6 +116,7 @@ export const defaultDeps: SessionDeps = {
   loadLandmarkers,
   createStt,
   createTts: () => new Tts(),
+  createLlm: (cfg) => createInterviewerLlm(cfg.llmProvider, cfg.apiKey),
 };
 
 const initialState = (): SessionState => ({
@@ -133,6 +140,8 @@ const initialState = (): SessionState => ({
   sttSupported: true,
   notice: null,
   faceVisible: true,
+  turnHint: null,
+  llmSummaryPending: false,
 });
 
 export function useSession(deps: SessionDeps = defaultDeps) {
@@ -158,6 +167,7 @@ export function useSession(deps: SessionDeps = defaultDeps) {
   const stopTickerRef = useRef<(() => void) | null>(null);
   const abortRef = useRef(false);
   const configRef = useRef<SessionConfig | null>(null);
+  const llmRef = useRef<InterviewerLlm | null>(null);
 
   const startedAtRef = useRef(0);
   const lastFrameRef = useRef(0);
@@ -179,6 +189,8 @@ export function useSession(deps: SessionDeps = defaultDeps) {
 
   const answeringRef = useRef(false);
   const lastUserVoiceRef = useRef(0);
+  /** 인식기가 마지막으로 텍스트를 바꾼 시각 */
+  const lastSttUpdateRef = useRef(0);
   const heardSpeechRef = useRef(false);
   const heardAtRef = useRef(0);
   const speechRunStartRef = useRef(0);
@@ -369,9 +381,13 @@ export function useSession(deps: SessionDeps = defaultDeps) {
         await micRef.current.attach(stream);
         await ttsRef.current.init();
         marksRef.current = await deps.loadLandmarkers((msg) => patch({ loadingMessage: msg }));
+        llmRef.current = await deps.createLlm(config).catch(() => null);
 
         const stt = sttRef.current;
-        stt.onUpdate = (snap) => patch({ transcript: snap.final, interim: snap.interim });
+        stt.onUpdate = (snap) => {
+          lastSttUpdateRef.current = performance.now();
+          patch({ transcript: snap.final, interim: snap.interim });
+        };
         stt.onFatal = (reason) => patch({ notice: reason });
 
         startedAtRef.current = performance.now();
@@ -522,6 +538,7 @@ export function useSession(deps: SessionDeps = defaultDeps) {
       let nudges = 0;
       let lastNudge = start;
       let lastShuffle = start;
+      let lastHint: string | null = null;
 
       while (!abortRef.current) {
         await sleep(200);
@@ -557,8 +574,26 @@ export function useSession(deps: SessionDeps = defaultDeps) {
           continue;
         }
 
-        if (sinceVoice > cfg.silenceEndSec) break;
+        // 침묵 길이만 보지 않고, 지금까지 들린 말이 끝맺어진 형태인지도 본다
+        const policy = decideTurnPolicy({
+          text: stt.snapshot().full,
+          sinceSttUpdateMs: lastSttUpdateRef.current ? now - lastSttUpdateRef.current : Infinity,
+          baseSilenceSec: cfg.silenceEndSec,
+          sttAvailable: stt.supported,
+        });
+        if (sinceVoice > policy.silenceSec) break;
+        const hint =
+          sinceVoice > 0.9 && policy.completeness === 'incomplete'
+            ? '말씀이 이어질 것 같아 기다리고 있습니다'
+            : sinceVoice > 0.9 && policy.completeness === 'complete'
+              ? '더 하실 말씀이 없으면 넘어갑니다'
+              : null;
+        if (hint !== lastHint) {
+          lastHint = hint;
+          patch({ turnHint: hint });
+        }
       }
+      if (lastHint) patch({ turnHint: null });
 
       answeringRef.current = false;
       answerStatsRef.current = null;
@@ -626,7 +661,25 @@ export function useSession(deps: SessionDeps = defaultDeps) {
 
     releaseMedia();
     if (!mountedRef.current) return;
-    setState((s) => ({ ...s, phase: 'report', report, subtitle: null, avatars: {} }));
+    const brain = llmRef.current;
+    const wantSummary = !!brain && answers.some((a) => a.transcript.trim().length > 4);
+    setState((s) => ({ ...s, phase: 'report', report, subtitle: null, avatars: {}, llmSummaryPending: wantSummary }));
+
+    if (brain && wantSummary && cfg) {
+      const pair = [getInterviewer(cfg.interviewerIds[0]), getInterviewer(cfg.interviewerIds[1])];
+      void brain.summarize(answers, pair).then((llm) => {
+        if (!mountedRef.current) return;
+        setState((s) => {
+          if (s.phase !== 'report' || !s.report) return { ...s, llmSummaryPending: false };
+          return {
+            ...s,
+            llmSummaryPending: false,
+            report: llm ? { ...s.report, content: { ...s.report.content, llm } } : s.report,
+            notice: !llm && brain.lastError ? brain.lastError : s.notice,
+          };
+        });
+      });
+    }
   }, [releaseMedia]);
 
   /* ── 면접 진행 ─────────────────────────────────────────────── */
@@ -655,13 +708,17 @@ export function useSession(deps: SessionDeps = defaultDeps) {
         await speak(`저는 ${b.name}입니다. 함께 듣겠습니다.`, b);
       }
 
+      // LLM 이 방금 답변을 짚어 준 한 마디. 다음 질문 앞에 붙는다
+      let bridge = '';
       for (let i = 0; i < cfg.questions.length; i++) {
         if (abortRef.current) break;
         const q = cfg.questions[i];
         const asker = pair[i % 2];
+        const other = pair[(i + 1) % 2];
         patch({ questionIndex: i });
 
-        await speak(q.text, asker, true);
+        await speak(bridge ? `${bridge} ${q.text}` : q.text, asker, true);
+        bridge = '';
         if (abortRef.current) break;
 
         const askedAt = performance.now();
@@ -679,18 +736,20 @@ export function useSession(deps: SessionDeps = defaultDeps) {
         let relevance = analyzeRelevance(q, first.text);
         let followUpText: string | null = null;
         let followUpReason: string | null = null;
+        /** 꼬리 질문을 누가 던지는지 (LLM 이 옆 면접관에게 넘길 수 있다) */
+        let followUpAsker = asker;
 
+        const brain = llmRef.current;
         const llmPromise =
-          cfg.useLlm && cfg.apiKey && first.text.length > 5
-            ? askInterviewerLlm({
-                apiKey: cfg.apiKey,
-                who: asker,
+          brain && first.text.length > 5
+            ? brain.evaluate({
+                asker,
+                other,
                 question: q,
                 answer: first.text,
-                previous: answersRef.current.map((r) => ({
-                  question: r.questionText,
-                  answer: r.transcript,
-                })),
+                previous: answersRef.current.map((r) => ({ question: r.questionText, answer: r.transcript })),
+                nextQuestion: cfg.questions[i + 1]?.text,
+                alreadyFollowedUp: false,
               })
             : Promise.resolve(null);
 
@@ -706,8 +765,12 @@ export function useSession(deps: SessionDeps = defaultDeps) {
           };
           if (llm.followUp) {
             followUpText = llm.followUp;
-            followUpReason = '면접관이 답변을 듣고 되물음';
+            followUpAsker = llm.handoff && other.id !== asker.id ? other : asker;
+            followUpReason = followUpAsker === asker ? '면접관이 답변을 듣고 되물음' : `${other.name} 교수가 이어받아 되물음`;
           }
+          bridge = llm.bridge;
+        } else if (brain?.lastError) {
+          patch({ notice: brain.lastError });
         }
 
         // 한마디도 없었으면 되물어도 소용없다 — 그냥 다음 질문으로
@@ -722,13 +785,21 @@ export function useSession(deps: SessionDeps = defaultDeps) {
         const mergedStats = first.stats;
 
         if (followUpText && cfg.allowFollowUps && !abortRef.current) {
-          await speak(followUpText, asker);
-          const second = await listenForAnswer(asker);
+          if (followUpAsker !== asker) {
+            // 옆 면접관이 끼어든다
+            setAvatars(followUpAsker.id, 'speaking', 'listening');
+            await speak(`제가 하나 여쭙겠습니다. ${followUpText}`, followUpAsker);
+          } else {
+            await speak(followUpText, asker);
+          }
+          const second = await listenForAnswer(followUpAsker);
           if (!abortRef.current) {
             mergedText = `${first.text} ${second.text}`.trim();
             mergedDuration += second.durationSec;
             mergeStats(mergedStats, second.stats);
-            relevance = analyzeRelevance(q, mergedText);
+            // 합친 답변으로 다시 채점하되, LLM 이 준 점수는 계속 절반 반영한다
+            const merged = analyzeRelevance(q, mergedText);
+            relevance = llm ? { ...merged, score: Math.round((merged.score + llm.relevance) / 2), note: llm.note || merged.note } : merged;
           }
           setAvatars(asker.id, 'writing', 'writing');
         }

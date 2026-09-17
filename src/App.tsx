@@ -141,7 +141,7 @@ export default function App({ sim }: { sim?: SimSetup }) {
       )}
 
       {state.phase === 'report' && state.report && (
-        <ReportScreen report={state.report} onRestart={backToSetup} />
+        <ReportScreen report={state.report} onRestart={backToSetup} summaryPending={state.llmSummaryPending} />
       )}
 
       {state.phase === 'error' && (

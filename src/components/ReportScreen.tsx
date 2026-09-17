@@ -4,6 +4,8 @@ import { METRIC_LABELS } from '../scoring/metrics';
 interface Props {
   report: SessionReport;
   onRestart: () => void;
+  /** LLM 총평이 아직 오는 중 */
+  summaryPending?: boolean;
 }
 
 const LINE_COLOR: Record<MetricKey, string> = {
@@ -27,7 +29,8 @@ function verdictOf(score: number) {
   return '집중 연습이 필요합니다';
 }
 
-export function ReportScreen({ report, onRestart }: Props) {
+export function ReportScreen({ report, onRestart, summaryPending }: Props) {
+  const ai = report.content.llm;
   const weakest = [...report.breakdown].sort((a, b) => a.score - b.score)[0];
   const strongest = [...report.breakdown].sort((a, b) => b.score - a.score)[0];
   const noData = report.answers.length === 0;
@@ -113,6 +116,40 @@ export function ReportScreen({ report, onRestart }: Props) {
         <p className="muted" style={{ marginTop: 0 }}>
           {report.content.summary}
         </p>
+        {(ai || summaryPending) && (
+          <div className="ai-summary">
+            <div className="tiny faint" style={{ marginBottom: 6 }}>
+              면접관 AI 총평
+            </div>
+            {ai ? (
+              <>
+                <p style={{ margin: '0 0 8px', lineHeight: 1.6 }}>{ai.summary}</p>
+                {ai.strengths.length > 0 && (
+                  <div className="ai-summary__list">
+                    <strong>잘한 점</strong>
+                    <ul>
+                      {ai.strengths.map((s) => (
+                        <li key={s}>{s}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {ai.improvements.length > 0 && (
+                  <div className="ai-summary__list">
+                    <strong>다음까지 고칠 점</strong>
+                    <ul>
+                      {ai.improvements.map((s) => (
+                        <li key={s}>{s}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </>
+            ) : (
+              <span className="muted tiny">총평을 쓰는 중…</span>
+            )}
+          </div>
+        )}
         {report.content.perAnswer.length > 0 && (
           <div className="metric__rows" style={{ marginTop: 10 }}>
             {report.content.perAnswer.map((p, i) => (
@@ -230,6 +267,11 @@ function downloadReport(report: SessionReport) {
     for (const t of m.tips) lines.push(`  → ${t}`);
   }
   lines.push('', '── 답변 내용 평가 ──', `${report.content.score}점 — ${report.content.summary}`);
+  if (report.content.llm) {
+    lines.push('', '[면접관 AI 총평]', report.content.llm.summary);
+    for (const s of report.content.llm.strengths) lines.push(`  + ${s}`);
+    for (const s of report.content.llm.improvements) lines.push(`  - ${s}`);
+  }
   lines.push('', '── 질문별 기록 ──');
   report.answers.forEach((a, i) => {
     lines.push(`\nQ${i + 1}. ${a.questionText}`);

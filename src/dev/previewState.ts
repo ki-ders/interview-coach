@@ -42,5 +42,7 @@ export function makePreviewState(): SessionState {
     sttSupported: true,
     notice: null,
     faceVisible: true,
+    turnHint: null,
+    llmSummaryPending: false,
   };
 }

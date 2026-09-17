@@ -144,6 +144,8 @@ export interface SessionReport {
     score: number;
     summary: string;
     perAnswer: { question: string; relevance: number; note: string }[];
+    /** LLM 면접관이 쓴 총평 (제공자를 설정한 경우, 리포트가 뜬 뒤 도착한다) */
+    llm?: { summary: string; strengths: string[]; improvements: string[] };
   };
   answers: AnswerRecord[];
   timeline: { t: number; metrics: LiveMetrics }[];
@@ -157,6 +159,7 @@ export interface SessionConfig {
   allowFollowUps: boolean;
   maxAnswerSec: number;
   silenceEndSec: number;
-  useLlm: boolean;
+  /** 면접관 두뇌: 'none' | 'gemini' | 'claude' */
+  llmProvider: 'none' | 'gemini' | 'claude';
   apiKey: string;
 }

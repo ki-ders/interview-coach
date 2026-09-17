@@ -1503,3 +1503,24 @@ textarea.input {
   padding-left: 16px;
   line-height: 1.5;
 }
+
+/* ── 면접관 AI 총평 ─────────────────────────────────────── */
+.ai-summary {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  font-size: 14px;
+}
+.ai-summary__list {
+  margin-top: 6px;
+}
+.ai-summary__list strong {
+  font-size: 13px;
+}
+.ai-summary__list ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  line-height: 1.55;
+}

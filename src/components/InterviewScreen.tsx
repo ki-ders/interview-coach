@@ -104,7 +104,9 @@ export function InterviewScreen({
             ) : (
               <div className="subtitle subtitle--listening">
                 <span className="subtitle__text">
-                  {running ? '답변해 주세요 — 말을 멈추면 다음으로 넘어갑니다' : '준비되면 시작하세요'}
+                  {running
+                    ? (state.turnHint ?? '답변해 주세요 — 말을 멈추면 다음으로 넘어갑니다')
+                    : '준비되면 시작하세요'}
                 </span>
               </div>
             )}

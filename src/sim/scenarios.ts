@@ -28,7 +28,7 @@ const baseConfig = (questions: SessionConfig['questions'], over: Partial<Session
   allowFollowUps: true,
   maxAnswerSec: 60,
   silenceEndSec: 2.5,
-  useLlm: false,
+  llmProvider: 'none',
   apiKey: '',
   ...over,
 });
@@ -139,6 +139,62 @@ export const SCENARIOS: Scenario[] = [
     expectations: ['총점 80 이상, 경고 없음, 5개 답변 모두 내용 65 이상', '꼬리질문은 나오지 않아야 정상 (모두 사례·길이·연관성 충족)'],
   },
 ];
+
+SCENARIOS.push({
+  id: 'breath',
+  name: '숨 고르기 (턴 감지)',
+  description:
+    '문장 중간("…했고", "그래서")에서 3초 넘게 숨을 고른다. 침묵 2.5초 규칙이면 답변이 잘리지만, 어미를 보는 턴 감지는 기다려야 한다',
+  config: baseConfig(common.slice(0, 2), { allowFollowUps: false }),
+  behaviors: [CALM],
+  answers: [
+    {
+      text:
+        '네, 저는 데이터 분석을 전공했고 | 학부 때 3년간 통계 프로젝트를 진행했습니다. 그래서 | 마지막 학기에는 팀 다섯 명을 이끌며 수요 예측 모델을 만들었습니다. ' +
+        '예측 오차를 18퍼센트 줄인 것이 | 가장 큰 성과였습니다.',
+      longPauseAfter: { 0: 3200, 2: 3600, 4: 3000 },
+    },
+    {
+      text: '제 강점은 | 끝까지 파고드는 집요함입니다. 약점은 완벽을 추구하다 일정이 밀린 적이 있다는 점인데 | 지금은 초안을 빠르게 만들고 다듬는 방식으로 보완하고 있습니다.',
+      longPauseAfter: { 0: 3000, 2: 4000 },
+    },
+  ],
+  expectations: [
+    '두 답변 모두 끝까지 인식된다 (1번 79자 이상, 2번 70자 이상). 중간 침묵에서 잘리지 않는다',
+    '숨 고르는 동안 자막에 "말씀이 이어질 것 같아 기다리고 있습니다" 가 뜬다',
+    '말끝(…입니다) 뒤에는 2초 안팎에 다음으로 넘어간다',
+  ],
+});
+
+SCENARIOS.push({
+  id: 'llm',
+  name: 'AI 면접관 (가짜 두뇌)',
+  description:
+    '두뇌를 켠 흐름: 1번 답변 뒤 연결 문장 → 2번 답변에 옆 면접관이 이어받아 되물음 → 3번 짧은 답에 되물음 → 리포트에 AI 총평',
+  config: baseConfig(common.slice(0, 3), { llmProvider: 'gemini', apiKey: 'sim' }),
+  behaviors: [CALM],
+  answers: [
+    {
+      text:
+        '네, 저는 데이터 분석을 전공한 지원자입니다. 학부 때 3년간 통계 프로젝트를 진행했고, 마지막 학기에는 팀 다섯 명을 이끌며 수요 예측 모델을 만들었습니다. ' +
+        '그 과정에서 예측 오차를 18퍼센트 줄인 것이 가장 큰 성과였습니다.',
+    },
+    {
+      text:
+        '제 강점은 데이터를 끝까지 파고드는 집요함입니다. 예를 들어 작년 프로젝트에서 이상치 원인을 찾기 위해 로그를 사흘 동안 추적해서 결국 센서 오류를 발견했습니다. ' +
+        '약점은 완벽을 추구하다 일정이 밀린 적이 있다는 점입니다.',
+    },
+    { text: '센서 값을 교체한 뒤 같은 구간을 다시 돌려서 오차가 사라진 것을 확인했습니다.' },
+    { text: '네, 좋은 회사라서요.' },
+    { text: '데이터로 의사결정하는 문화가 있다고 들었고, 그런 환경에서 성장하고 싶었습니다.' },
+  ],
+  expectations: [
+    '2번 질문 앞에 "수요 예측 얘기 흥미롭게 들었습니다." 가 붙는다',
+    '2번 답변 뒤 다른 면접관이 "제가 하나 여쭙겠습니다." 로 끼어들어 되묻고, 그 답변까지 2번 기록에 합쳐진다',
+    '3번 짧은 답에 되물음, 합친 답변 기록',
+    '리포트 하단에 AI 총평(강점·보완점) 이 뜬다 (report.content.llm)',
+  ],
+});
 
 export function getScenario(id: string): Scenario {
   return SCENARIOS.find((s) => s.id === id) ?? SCENARIOS[0];

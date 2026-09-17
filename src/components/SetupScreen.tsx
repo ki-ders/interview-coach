@@ -3,14 +3,42 @@ import { INTERVIEWERS } from '../data/interviewers';
 import { QUESTION_PACKS, makeQuestion } from '../data/questions';
 import type { Question, SessionConfig } from '../types';
 import { InterviewerCard } from './InterviewerCard';
-import { looksLikeKey } from '../interview/llm';
+import {
+  PROVIDER_LABEL,
+  createInterviewerLlm,
+  keyHint,
+  looksLikeKey,
+  type LlmProvider,
+  type LlmTestResult,
+} from '../interview/llm';
 import { PhotoGuide } from './PhotoGuide';
 
 interface Props {
   onStart: (config: SessionConfig) => void;
 }
 
-const KEY_STORE = 'interview-coach:apiKey';
+/** 제공자 선택과 제공자별 키를 이 브라우저에만 저장한다 */
+const LLM_STORE = 'interview-coach:llm';
+interface LlmPrefs {
+  provider: LlmProvider;
+  keys: Partial<Record<LlmProvider, string>>;
+}
+function loadLlmPrefs(): LlmPrefs {
+  try {
+    const raw = localStorage.getItem(LLM_STORE);
+    if (raw) {
+      const p = JSON.parse(raw) as Partial<LlmPrefs>;
+      if (p.provider && p.keys) return { provider: p.provider, keys: p.keys };
+    }
+    // 예전 버전의 Anthropic 키 저장소
+    const legacy = localStorage.getItem('interview-coach:apiKey');
+    if (legacy) return { provider: 'none', keys: { claude: legacy } };
+  } catch {
+    /* 손상된 값은 무시 */
+  }
+  return { provider: 'none', keys: {} };
+}
+const PROVIDERS: LlmProvider[] = ['none', 'gemini', 'claude'];
 
 export function SetupScreen({ onStart }: Props) {
   const [picked, setPicked] = useState<string[]>(['seo', 'kang']);
@@ -20,11 +48,32 @@ export function SetupScreen({ onStart }: Props) {
   const [allowFollowUps, setAllowFollowUps] = useState(true);
   const [maxAnswerSec, setMaxAnswerSec] = useState(120);
   const [silenceEndSec, setSilenceEndSec] = useState(2.5);
-  const [useLlm, setUseLlm] = useState(false);
-  const [apiKey, setApiKey] = useState(() => localStorage.getItem(KEY_STORE) ?? '');
+  const [llmPrefs, setLlmPrefs] = useState<LlmPrefs>(loadLlmPrefs);
+  const [testResult, setTestResult] = useState<LlmTestResult | null>(null);
+  const [testing, setTesting] = useState(false);
+  const provider = llmPrefs.provider;
+  const apiKey = llmPrefs.keys[provider] ?? '';
+  const setProvider = (next: LlmProvider) => {
+    setTestResult(null);
+    setLlmPrefs((p) => ({ ...p, provider: next }));
+  };
+  const setApiKey = (key: string) => {
+    setTestResult(null);
+    setLlmPrefs((p) => ({ ...p, keys: { ...p.keys, [p.provider]: key } }));
+  };
 
   const ready = picked.length === 2 && questions.length > 0;
-  const keyLooksOk = !useLlm || looksLikeKey(apiKey);
+  const keyLooksOk = provider === 'none' || looksLikeKey(provider, apiKey);
+
+  const testKey = async () => {
+    setTesting(true);
+    try {
+      const llm = await createInterviewerLlm(provider, apiKey);
+      setTestResult(llm ? await llm.test() : { ok: false, message: '키를 입력하세요.' });
+    } finally {
+      setTesting(false);
+    }
+  };
 
   const toggle = (id: string) => {
     setPicked((cur) => {
@@ -55,15 +104,15 @@ export function SetupScreen({ onStart }: Props) {
 
   const submit = () => {
     if (!ready || !keyLooksOk) return;
-    if (useLlm) localStorage.setItem(KEY_STORE, apiKey.trim());
+    localStorage.setItem(LLM_STORE, JSON.stringify(llmPrefs));
     onStart({
       interviewerIds: [picked[0], picked[1]],
       questions,
       allowFollowUps,
       maxAnswerSec,
       silenceEndSec,
-      useLlm,
-      apiKey: useLlm ? apiKey.trim() : '',
+      llmProvider: provider,
+      apiKey: provider === 'none' ? '' : apiKey.trim(),
     });
   };
 
@@ -214,44 +263,75 @@ export function SetupScreen({ onStart }: Props) {
           </div>
         </div>
 
-        <div className="switch-row">
-          <div className="switch-row__body">
-            <div className="switch-row__title">면접관이 답변을 읽고 직접 질문 생성 (선택)</div>
-            <div className="muted tiny">
-              본인의 Anthropic API 키를 넣으면 면접관이 답변 내용을 이해하고 맥락에 맞는 꼬리 질문을
-              만듭니다. 키는 이 브라우저에만 저장되며, 요청은 기기에서 직접 전송됩니다. 공용 PC 에서는
-              사용하지 마세요.
-            </div>
+        <div className="field" style={{ marginTop: 6 }}>
+          <div className="switch-row__title">면접관 두뇌 (선택)</div>
+          <div className="muted tiny" style={{ marginBottom: 8 }}>
+            AI 를 붙이면 면접관이 답변 내용을 실제로 읽고, 방금 한 말을 짚어 되묻고, 옆 면접관이 끼어들고, 끝나면
+            내용 총평을 씁니다. 없어도 채점과 면접은 그대로 진행됩니다. 키는 이 브라우저에만 저장되고 요청은 기기에서
+            직접 나갑니다.
           </div>
-          <button
-            type="button"
-            className={`switch${useLlm ? ' switch--on' : ''}`}
-            onClick={() => setUseLlm((v) => !v)}
-            aria-pressed={useLlm}
-            aria-label="AI 면접관 사용"
-          />
+          <div className="pack-row">
+            {PROVIDERS.map((id) => (
+              <button
+                key={id}
+                type="button"
+                className={`pack${provider === id ? ' pack--on' : ''}`}
+                onClick={() => setProvider(id)}
+                aria-pressed={provider === id}
+              >
+                {PROVIDER_LABEL[id]}
+              </button>
+            ))}
+          </div>
+          {provider === 'gemini' && (
+            <div className="muted tiny" style={{ marginTop: 6 }}>
+              <a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer">
+                aistudio.google.com/apikey
+              </a>{' '}
+              에서 Google 계정으로 무료 키를 만들 수 있습니다 (카드 등록 없음). 답변 텍스트가 Google 로 전송됩니다.
+            </div>
+          )}
+          {provider === 'claude' && (
+            <div className="muted tiny" style={{ marginTop: 6 }}>
+              유료입니다 (8문항 면접 한 번에 대략 몇백 원). console.anthropic.com 에서 키를 만듭니다.
+            </div>
+          )}
         </div>
 
-        {useLlm && (
+        {provider !== 'none' && (
           <div className="field" style={{ marginTop: 4 }}>
-            <label htmlFor="apikey">Anthropic API 키</label>
-            <input
-              id="apikey"
-              className="input"
-              type="password"
-              autoComplete="off"
-              placeholder="sk-ant-..."
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-            />
+            <label htmlFor="apikey">{PROVIDER_LABEL[provider]} API 키</label>
+            <div className="row" style={{ gap: 8 }}>
+              <input
+                id="apikey"
+                className="input"
+                type="password"
+                autoComplete="off"
+                placeholder={keyHint(provider)}
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+                style={{ flex: 1 }}
+              />
+              <button
+                type="button"
+                className="btn btn--ghost"
+                disabled={!keyLooksOk || !apiKey || testing}
+                onClick={() => void testKey()}
+              >
+                {testing ? '확인 중…' : '연결 테스트'}
+              </button>
+            </div>
             {!keyLooksOk && apiKey.length > 0 && (
               <span className="tiny" style={{ color: 'var(--bad)' }}>
-                키 형식이 올바르지 않습니다. sk-ant- 로 시작해야 합니다.
+                키 형식이 올바르지 않습니다. {keyHint(provider)}
               </span>
             )}
-            <span className="tiny faint">
-              키가 없어도 면접은 정상 진행됩니다. 이 경우 규칙 기반으로 꼬리 질문을 만듭니다.
-            </span>
+            {testResult && (
+              <span className="tiny" style={{ color: testResult.ok ? 'var(--good)' : 'var(--bad)' }}>
+                {testResult.message}
+              </span>
+            )}
+            <span className="tiny faint">키가 없거나 호출이 실패하면 규칙 기반으로 자동 전환됩니다.</span>
           </div>
         )}
       </section>

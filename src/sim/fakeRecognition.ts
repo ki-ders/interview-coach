@@ -41,9 +41,10 @@ interface ResultLike {
   0: { transcript: string; confidence: number };
 }
 
+/** 문장 끝, 또는 대본에 명시한 '|' (숨 고르기 지점) 에서 자른다 */
 function splitSentences(text: string): string[] {
   const out = text
-    .split(/(?<=[.?!])\s+/)
+    .split(/\s*\|\s*|(?<=[.?!])\s+/)
     .map((s) => s.trim())
     .filter(Boolean);
   return out.length ? out : [text];
