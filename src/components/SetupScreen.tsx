@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { INTERVIEWERS } from '../data/interviewers';
 import { QUESTION_PACKS, makeQuestion } from '../data/questions';
 import type { Question, SessionConfig } from '../types';
@@ -49,6 +49,14 @@ export function SetupScreen({ onStart }: Props) {
   const [maxAnswerSec, setMaxAnswerSec] = useState(120);
   const [silenceEndSec, setSilenceEndSec] = useState(2.5);
   const [llmPrefs, setLlmPrefs] = useState<LlmPrefs>(loadLlmPrefs);
+  // 키와 선택은 입력하는 즉시 저장한다 — "면접 시작" 을 누르기 전에 새로고침해도 남아 있게
+  useEffect(() => {
+    try {
+      localStorage.setItem(LLM_STORE, JSON.stringify(llmPrefs));
+    } catch {
+      /* 저장 공간 없음 등은 무시 */
+    }
+  }, [llmPrefs]);
   const [testResult, setTestResult] = useState<LlmTestResult | null>(null);
   const [testing, setTesting] = useState(false);
   const provider = llmPrefs.provider;
@@ -63,7 +71,8 @@ export function SetupScreen({ onStart }: Props) {
   };
 
   const ready = picked.length === 2 && questions.length > 0;
-  const keyLooksOk = provider === 'none' || looksLikeKey(provider, apiKey);
+  const keyLooksOk = provider === 'none' || apiKey.trim().length > 0;
+  const keyLooksOdd = provider !== 'none' && apiKey.trim().length > 0 && !looksLikeKey(provider, apiKey);
 
   const testKey = async () => {
     setTesting(true);
@@ -321,9 +330,9 @@ export function SetupScreen({ onStart }: Props) {
                 {testing ? '확인 중…' : '연결 테스트'}
               </button>
             </div>
-            {!keyLooksOk && apiKey.length > 0 && (
-              <span className="tiny" style={{ color: 'var(--bad)' }}>
-                키 형식이 올바르지 않습니다. {keyHint(provider)}
+            {keyLooksOdd && (
+              <span className="tiny" style={{ color: 'var(--warn)' }}>
+                보통 {keyHint(provider).split(' ')[0]} 로 시작합니다. 다른 곳의 키를 넣은 건 아닌지 확인하고, 연결 테스트로 확인해 보세요.
               </span>
             )}
             {testResult && (
