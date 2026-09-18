@@ -12,6 +12,7 @@ import {
   type LlmTestResult,
 } from '../interview/llm';
 import { PhotoGuide } from './PhotoGuide';
+import { BackdropPicker } from './BackdropPicker';
 
 interface Props {
   onStart: (config: SessionConfig) => void;
@@ -40,6 +41,29 @@ function loadLlmPrefs(): LlmPrefs {
 }
 const PROVIDERS: LlmProvider[] = ['none', 'gemini', 'claude'];
 
+/** 진행 방식 선택 — 다음에 열어도 그대로 */
+const PREF_STORE = 'interview-coach:prefs';
+interface Prefs {
+  gazeGuide: 'fixed' | 'guided';
+  blindMode: boolean;
+  recordVideo: boolean;
+}
+const DEFAULT_PREFS: Prefs = { gazeGuide: 'fixed', blindMode: false, recordVideo: true };
+function loadPrefs(): Prefs {
+  try {
+    const raw = localStorage.getItem(PREF_STORE);
+    if (!raw) return DEFAULT_PREFS;
+    const parsed = JSON.parse(raw) as Partial<Prefs>;
+    return {
+      gazeGuide: parsed.gazeGuide === 'guided' ? 'guided' : 'fixed',
+      blindMode: parsed.blindMode === true,
+      recordVideo: parsed.recordVideo !== false,
+    };
+  } catch {
+    return DEFAULT_PREFS;
+  }
+}
+
 export function SetupScreen({ onStart }: Props) {
   const [picked, setPicked] = useState<string[]>(['seo', 'kang']);
   const [packId, setPackId] = useState(QUESTION_PACKS[0].id);
@@ -48,6 +72,15 @@ export function SetupScreen({ onStart }: Props) {
   const [allowFollowUps, setAllowFollowUps] = useState(true);
   const [maxAnswerSec, setMaxAnswerSec] = useState(120);
   const [silenceEndSec, setSilenceEndSec] = useState(2.5);
+  const [prefs, setPrefs] = useState(loadPrefs);
+  useEffect(() => {
+    try {
+      localStorage.setItem(PREF_STORE, JSON.stringify(prefs));
+    } catch {
+      /* 저장 공간 없음 등은 무시 */
+    }
+  }, [prefs]);
+  const setPref = <K extends keyof Prefs>(k: K, v: Prefs[K]) => setPrefs((p) => ({ ...p, [k]: v }));
   const [llmPrefs, setLlmPrefs] = useState<LlmPrefs>(loadLlmPrefs);
   // 키와 선택은 입력하는 즉시 저장한다 — "면접 시작" 을 누르기 전에 새로고침해도 남아 있게
   useEffect(() => {
@@ -122,6 +155,9 @@ export function SetupScreen({ onStart }: Props) {
       silenceEndSec,
       llmProvider: provider,
       apiKey: provider === 'none' ? '' : apiKey.trim(),
+      gazeGuide: prefs.gazeGuide,
+      blindMode: prefs.blindMode,
+      recordVideo: prefs.recordVideo,
     });
   };
 
@@ -153,6 +189,8 @@ export function SetupScreen({ onStart }: Props) {
         <p className="tiny faint" style={{ marginTop: 12, marginBottom: 0 }}>
           등장 인물은 모두 가상이며 실존 인물과 관계가 없습니다. 사진을 넣을 때도 실존 인물 사진은 쓰지 마세요.
         </p>
+        <hr className="hr" />
+        <BackdropPicker />
       </section>
 
       {/* 2. 질문 */}
@@ -270,6 +308,67 @@ export function SetupScreen({ onStart }: Props) {
               onChange={(e) => setSilenceEndSec(Number(e.target.value))}
             />
           </div>
+        </div>
+
+        <div className="switch-row">
+          <div className="switch-row__body">
+            <div className="switch-row__title">시선 안내 점</div>
+            <div className="muted tiny">
+              {prefs.gazeGuide === 'guided'
+                ? '점이 렌즈와 면접관 얼굴 사이를 오갑니다. 점을 따라 자연스럽게 시선을 옮기는 연습이 되고, 점을 잘 따라갈수록 시선 점수가 오릅니다.'
+                : '렌즈 표시 한 점만 보여 줍니다. 카메라를 꾸준히 보는 연습에 맞습니다.'}
+            </div>
+            <div className="row" style={{ marginTop: 8, gap: 6 }}>
+              <button
+                type="button"
+                className={`pack${prefs.gazeGuide === 'fixed' ? ' pack--on' : ''}`}
+                onClick={() => setPref('gazeGuide', 'fixed')}
+              >
+                고정 (렌즈)
+              </button>
+              <button
+                type="button"
+                className={`pack${prefs.gazeGuide === 'guided' ? ' pack--on' : ''}`}
+                onClick={() => setPref('gazeGuide', 'guided')}
+              >
+                따라가기 (움직이는 점)
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="switch-row">
+          <div className="switch-row__body">
+            <div className="switch-row__title">블라인드 면접</div>
+            <div className="muted tiny">
+              성명·출신 학교·가족/친인척·수상 실적·수험번호를 말하면 면접관이 즉시 지적하고, 결과는{' '}
+              <strong>부적격</strong>으로 처리됩니다. 시작할 때 규정을 안내합니다.
+            </div>
+          </div>
+          <button
+            type="button"
+            className={`switch${prefs.blindMode ? ' switch--on' : ''}`}
+            onClick={() => setPref('blindMode', !prefs.blindMode)}
+            aria-pressed={prefs.blindMode}
+            aria-label="블라인드 면접"
+          />
+        </div>
+
+        <div className="switch-row">
+          <div className="switch-row__body">
+            <div className="switch-row__title">면접 영상 녹화</div>
+            <div className="muted tiny">
+              카메라 영상과 내 목소리를 녹화해 끝나면 파일로 저장·공유할 수 있습니다. 영상은 이 기기 밖으로 나가지
+              않습니다.
+            </div>
+          </div>
+          <button
+            type="button"
+            className={`switch${prefs.recordVideo ? ' switch--on' : ''}`}
+            onClick={() => setPref('recordVideo', !prefs.recordVideo)}
+            aria-pressed={prefs.recordVideo}
+            aria-label="면접 영상 녹화"
+          />
         </div>
 
         <div className="field" style={{ marginTop: 6 }}>

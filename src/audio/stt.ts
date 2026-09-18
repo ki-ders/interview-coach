@@ -71,6 +71,8 @@ export interface SttSnapshot {
   interim: string;
   /** final + interim */
   full: string;
+  /** 확정 결과들의 평균 신뢰도(0~1). 브라우저가 0 만 주면 null */
+  confidence: number | null;
 }
 
 export class Stt {
@@ -81,6 +83,10 @@ export class Stt {
 
   private finalText = '';
   private interimText = '';
+  private confSum = 0;
+  private confN = 0;
+  /** 직전 endTurn() 이 돌려준 답변의 평균 신뢰도 */
+  lastTurnConfidence: number | null = null;
   /** true 인 동안 들어온 결과는 버린다 (면접관 TTS 음성 차단) */
   gated = false;
   /** 직전에 면접관이 말한 문장. 이와 비슷한 인식 결과는 스피커 에코로 보고 버린다 */
@@ -91,12 +97,12 @@ export class Stt {
 
   readonly supported = getCtor() !== null;
 
+  private get confidence(): number | null {
+    return this.confN ? this.confSum / this.confN : null;
+  }
+
   private emit() {
-    this.onUpdate?.({
-      final: this.finalText.trim(),
-      interim: this.interimText.trim(),
-      full: `${this.finalText} ${this.interimText}`.trim(),
-    });
+    this.onUpdate?.(this.snapshot());
   }
 
   private create(): SttInstance | null {
@@ -123,6 +129,12 @@ export class Stt {
         if (res.isFinal) {
           if (looksLikeEcho(text, this.ignoreText)) continue;
           this.finalText += (this.finalText ? ' ' : '') + text;
+          // 일부 브라우저는 신뢰도를 항상 0 으로 준다 — 그건 모름으로 취급한다
+          const conf = res[0]?.confidence ?? 0;
+          if (conf > 0) {
+            this.confSum += conf;
+            this.confN++;
+          }
         } else {
           interim += text;
         }
@@ -198,14 +210,19 @@ export class Stt {
   beginTurn() {
     this.finalText = '';
     this.interimText = '';
+    this.confSum = 0;
+    this.confN = 0;
     this.emit();
   }
 
   /** 현재 턴의 텍스트를 확정해 반환 */
   endTurn(): string {
     const text = `${this.finalText} ${this.interimText}`.trim();
+    this.lastTurnConfidence = this.confidence;
     this.finalText = '';
     this.interimText = '';
+    this.confSum = 0;
+    this.confN = 0;
     return text;
   }
 
@@ -214,6 +231,7 @@ export class Stt {
       final: this.finalText.trim(),
       interim: this.interimText.trim(),
       full: `${this.finalText} ${this.interimText}`.trim(),
+      confidence: this.confidence,
     };
   }
 }
@@ -232,4 +250,5 @@ export type SttEngine = Pick<
   | 'beginTurn'
   | 'endTurn'
   | 'snapshot'
+  | 'lastTurnConfidence'
 >;

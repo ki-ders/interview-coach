@@ -24,20 +24,29 @@ function loadVoices(): Promise<SpeechSynthesisVoice[]> {
   });
 }
 
-const FEMALE_HINTS = ['heami', 'sunhi', 'yuna', 'female', '여성'];
-const MALE_HINTS = ['injoon', 'male', '남성', 'gyeong'];
+/** 플랫폼별 한국어 음성 이름 (Windows/Edge: Heami·SunHi·InJoon·Hyunsu·BongJin·GookMin·YuJin·JiMin·SeoHyeon, iOS: Yuna·Suhyun·Jian·Minsu, Google: 남/여 구분 없음) */
+const FEMALE_HINTS = ['heami', 'sunhi', 'yuna', 'yujin', 'jimin', 'seohyeon', 'suhyun', 'jian', 'female', '여성', '여자'];
+const MALE_HINTS = ['injoon', 'hyunsu', 'bongjin', 'gookmin', 'minsu', 'male', '남성', '남자', 'gyeong'];
 
-function pickVoice(
-  voices: SpeechSynthesisVoice[],
-  preferFemale: boolean,
-): SpeechSynthesisVoice | null {
-  const korean = voices.filter((v) => v.lang?.toLowerCase().startsWith('ko'));
-  if (!korean.length) return null;
-  const hints = preferFemale ? FEMALE_HINTS : MALE_HINTS;
-  const match = korean.find((v) => hints.some((h) => v.name.toLowerCase().includes(h)));
-  if (match) return match;
-  // 한국어 음성이 여러 개면 서로 다른 것을 배정해 구분감을 준다
-  return korean[preferFemale ? 0 : Math.min(1, korean.length - 1)];
+export interface VoicePick {
+  voice: SpeechSynthesisVoice | null;
+  /** 성별에 맞는 음성을 찾았는지. 못 찾으면 음높이로 구분감을 준다 */
+  genderMatched: boolean;
+}
+
+export function pickVoice(voices: SpeechSynthesisVoice[], preferFemale: boolean): VoicePick {
+  const korean = voices.filter((v) => v.lang?.toLowerCase().replace('_', '-').startsWith('ko'));
+  if (!korean.length) return { voice: null, genderMatched: false };
+  const has = (v: SpeechSynthesisVoice, hints: string[]) => hints.some((h) => v.name.toLowerCase().includes(h));
+  const wanted = preferFemale ? FEMALE_HINTS : MALE_HINTS;
+  const other = preferFemale ? MALE_HINTS : FEMALE_HINTS;
+  // 1) 이름으로 성별이 맞는 음성. 로컬(기기 내장) 음성을 우선한다 — 지연이 적다
+  const matches = korean.filter((v) => has(v, wanted) && !has(v, other));
+  if (matches.length) return { voice: matches.find((v) => v.localService) ?? matches[0], genderMatched: true };
+  // 2) 반대 성별로 확인된 것을 뺀 나머지 중에서, 여러 개면 서로 다른 것을 배정한다
+  const neutral = korean.filter((v) => !has(v, other));
+  const pool = neutral.length ? neutral : korean;
+  return { voice: pool[preferFemale ? 0 : Math.min(1, pool.length - 1)], genderMatched: false };
 }
 
 function clampMs(v: number) {
@@ -106,8 +115,10 @@ export class Tts {
     utter.rate = who.voice.rate;
     utter.volume = 1;
     if (this.ready) {
-      const v = pickVoice(voicesCache, who.voice.preferFemale);
-      if (v) utter.voice = v;
+      const pick = pickVoice(voicesCache, who.voice.preferFemale);
+      if (pick.voice) utter.voice = pick.voice;
+      // 기기에 한 성별 음성밖에 없으면(아이패드는 대개 여성 음성 하나) 음높이 차이를 더 벌려 구분되게 한다
+      if (!pick.genderMatched) utter.pitch = who.voice.preferFemale ? who.voice.pitch + 0.05 : Math.max(0.55, who.voice.pitch - 0.18);
     }
 
     utter.onstart = () => {

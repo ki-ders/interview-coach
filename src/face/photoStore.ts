@@ -75,3 +75,53 @@ export const PHOTO_CHANGED = 'interview-coach:photo-changed';
 export function notifyPhotoChanged(id: string) {
   window.dispatchEvent(new CustomEvent(PHOTO_CHANGED, { detail: id }));
 }
+
+/* ── 면접장 배경 사진 ─────────────────────────────────────────── */
+const BACKDROP_KEY = 'interview-coach:backdrop';
+const BACKDROP_MAX_SIDE = 1600;
+
+/** 사용자가 올린 면접장 배경 (없으면 null → CSS 로 그린 방을 쓴다) */
+export function getBackdrop(): string | null {
+  try {
+    return localStorage.getItem(BACKDROP_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function clearBackdrop() {
+  try {
+    localStorage.removeItem(BACKDROP_KEY);
+  } catch {
+    /* noop */
+  }
+  notifyBackdropChanged();
+}
+
+/** 배경 사진을 1600px 이하 JPEG 로 줄여 저장한다 */
+export async function saveBackdrop(file: File): Promise<string> {
+  const bitmap = await createImageBitmap(file);
+  const scale = Math.min(1, BACKDROP_MAX_SIDE / Math.max(bitmap.width, bitmap.height));
+  const w = Math.round(bitmap.width * scale);
+  const h = Math.round(bitmap.height * scale);
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('canvas 를 만들 수 없습니다.');
+  ctx.drawImage(bitmap, 0, 0, w, h);
+  bitmap.close();
+  const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+  try {
+    localStorage.setItem(BACKDROP_KEY, dataUrl);
+  } catch {
+    throw new Error('저장 공간이 부족합니다. 더 작은 사진을 써 주세요.');
+  }
+  notifyBackdropChanged();
+  return dataUrl;
+}
+
+export const BACKDROP_CHANGED = 'interview-coach:backdrop-changed';
+export function notifyBackdropChanged() {
+  window.dispatchEvent(new Event(BACKDROP_CHANGED));
+}

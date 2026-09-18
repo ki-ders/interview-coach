@@ -1,12 +1,25 @@
+import { useState } from 'react';
 import type { MetricKey, SessionReport } from '../types';
 import { METRIC_LABELS } from '../scoring/metrics';
+import { recordingExtension } from '../lib/recorder';
+
+export interface ReportVideo {
+  url: string;
+  mimeType: string;
+  sizeBytes: number;
+  durationMs: number;
+}
 
 interface Props {
   report: SessionReport;
   onRestart: () => void;
   /** LLM 총평이 아직 오는 중 */
   summaryPending?: boolean;
+  /** 녹화된 면접 영상 */
+  video?: ReportVideo | null;
 }
+
+const GRADES = ['S', 'A', 'B', 'C', 'D', 'F'];
 
 const LINE_COLOR: Record<MetricKey, string> = {
   gaze: '#3b82f6',
@@ -29,8 +42,9 @@ function verdictOf(score: number) {
   return '집중 연습이 필요합니다';
 }
 
-export function ReportScreen({ report, onRestart, summaryPending }: Props) {
+export function ReportScreen({ report, onRestart, summaryPending, video }: Props) {
   const ai = report.content.llm;
+  const disqualified = report.blind?.disqualified === true;
   const weakest = [...report.breakdown].sort((a, b) => a.score - b.score)[0];
   const strongest = [...report.breakdown].sort((a, b) => b.score - a.score)[0];
   const noData = report.answers.length === 0;
@@ -42,14 +56,25 @@ export function ReportScreen({ report, onRestart, summaryPending }: Props) {
           <div className="score-ring" style={{ ['--pct' as string]: report.total }}>
             <div className="score-ring__inner">
               <div className="score-ring__num">{report.total}</div>
-              <div className="score-ring__grade">{report.grade}</div>
+              <div className={`score-ring__grade${disqualified ? ' score-ring__grade--dq' : ''}`}>{report.grade}</div>
             </div>
           </div>
           <div style={{ flex: 1, minWidth: 260 }}>
             <h1 style={{ fontSize: 22, marginBottom: 6 }}>모의 면접 결과</h1>
             <p className="muted" style={{ margin: '0 0 12px' }}>
               {fmtDuration(report.durationSec)} 동안 {report.answers.length}개 문항에 답했습니다.
+              {disqualified && ' 블라인드 규정 위반으로 부적격 처리되었습니다.'}
             </p>
+            <div className="grade-scale" aria-label="등급 척도">
+              {GRADES.map((g) => (
+                <span key={g} className={!disqualified && report.grade === g ? 'on' : ''}>
+                  {g}
+                </span>
+              ))}
+            </div>
+            <div className="tiny faint" style={{ marginTop: 4 }}>
+              S 90점 이상 · A 80 · B 70 · C 60 · D 50 · F 그 미만
+            </div>
             {!noData && (
               <div className="row">
                 <span className="chip">
@@ -70,6 +95,30 @@ export function ReportScreen({ report, onRestart, summaryPending }: Props) {
           </div>
         )}
       </section>
+
+      {report.blind && (
+        <section className={report.blind.disqualified ? 'blind-box' : 'card card__pad'}>
+          <h3 style={{ fontSize: 15, marginBottom: 8 }}>
+            {report.blind.disqualified ? '블라인드 면접 규정 위반 — 부적격' : '블라인드 면접 규정 준수'}
+          </h3>
+          {report.blind.disqualified ? (
+            <ul style={{ margin: 0, paddingLeft: 18 }}>
+              {report.blind.violations.map((v, i) => (
+                <li key={i}>
+                  <span className="blind-box__cat">{v.label}</span>
+                  <span className="blind-box__quote">Q{v.questionIndex + 1} "{v.excerpt}"</span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="muted tiny" style={{ margin: 0 }}>
+              성명·출신 학교·가족·수상 실적·수험번호를 한 번도 말하지 않았습니다.
+            </p>
+          )}
+        </section>
+      )}
+
+      {video && <VideoBox video={video} />}
 
       <section className="stack" style={{ gap: 14 }}>
         <div className="section-title">
@@ -248,6 +297,61 @@ export function ReportScreen({ report, onRestart, summaryPending }: Props) {
   );
 }
 
+/** 녹화 영상: 다시 보기 · 저장 · (지원하면) 공유 */
+function VideoBox({ video }: { video: ReportVideo }) {
+  const [shared, setShared] = useState<string | null>(null);
+  const ext = recordingExtension(video.mimeType);
+  const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+  const filename = `모의면접-${stamp}.${ext}`;
+  const mb = (video.sizeBytes / 1024 / 1024).toFixed(1);
+  const canShare = typeof navigator !== 'undefined' && typeof navigator.canShare === 'function';
+
+  const share = async () => {
+    try {
+      const blob = await fetch(video.url).then((r) => r.blob());
+      const file = new File([blob], filename, { type: video.mimeType });
+      if (!navigator.canShare?.({ files: [file] })) {
+        setShared('이 브라우저는 파일 공유를 지원하지 않습니다. 저장 버튼을 쓰세요.');
+        return;
+      }
+      await navigator.share({ files: [file], title: '모의 면접 영상' });
+      setShared(null);
+    } catch (err) {
+      if ((err as Error)?.name !== 'AbortError') setShared('공유하지 못했습니다. 저장 버튼을 쓰세요.');
+    }
+  };
+
+  return (
+    <section className="card card__pad video-box">
+      <div className="section-title">
+        <h2>면접 영상</h2>
+        <span className="chip">
+          {fmtClock(video.durationMs)} · {mb}MB
+        </span>
+      </div>
+      <video src={video.url} controls playsInline preload="metadata" />
+      <div className="row" style={{ marginTop: 12, justifyContent: 'space-between', flexWrap: 'wrap' }}>
+        <span className="tiny faint">영상은 이 기기에만 있습니다. 화면을 떠나면 사라지니 필요하면 지금 저장하세요.</span>
+        <div className="row" style={{ gap: 8 }}>
+          {canShare && (
+            <button type="button" className="btn btn--ghost" onClick={() => void share()}>
+              공유 / 사진에 저장
+            </button>
+          )}
+          <a className="btn btn--primary" href={video.url} download={filename}>
+            영상 저장 (.{ext})
+          </a>
+        </div>
+      </div>
+      {shared && (
+        <div className="tiny" style={{ marginTop: 8, color: 'var(--warn)' }}>
+          {shared}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function fmtClock(ms: number) {
   const total = Math.round(ms / 1000);
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
@@ -261,6 +365,10 @@ function downloadReport(report: SessionReport) {
     '',
     '── 항목별 평가 ──',
   ];
+  if (report.blind?.disqualified) {
+    lines.splice(2, 0, '', '── 블라인드 규정 위반 (부적격) ──');
+    report.blind.violations.forEach((v) => lines.splice(3, 0, `  · ${v.label}: Q${v.questionIndex + 1} "${v.excerpt}"`));
+  }
   for (const m of report.breakdown) {
     lines.push(`\n[${m.label}] ${m.score}점 — ${m.summary}`);
     for (const d of m.details) lines.push(`  · ${d.label}: ${d.value}`);
@@ -275,6 +383,7 @@ function downloadReport(report: SessionReport) {
   lines.push('', '── 질문별 기록 ──');
   report.answers.forEach((a, i) => {
     lines.push(`\nQ${i + 1}. ${a.questionText}`);
+    if (a.reasked) lines.push('  ↳ 잘 못 알아들어 다시 물었음');
     if (a.followUpAsked) lines.push(`  ↳ 꼬리 질문: ${a.followUpAsked}`);
     lines.push(`  답변: ${a.transcript || '(인식된 답변 없음)'}`);
     lines.push(

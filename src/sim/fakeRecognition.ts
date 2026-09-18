@@ -18,6 +18,8 @@ export interface ScriptedAnswer {
   longPauseAfter?: Record<number, number>;
   /** 말을 시작하기 전 기다리는 시간 (ms). 면접관의 재촉을 받는 상황을 만든다 */
   delayMs?: number;
+  /** 인식기가 보고할 신뢰도 (기본 0.9). 낮추면 "다시 말씀해 주시겠어요" 경로를 탄다 */
+  confidence?: number;
 }
 
 export class AnswerScript {
@@ -77,10 +79,13 @@ export function installFakeRecognition(world: SimWorld, script: AnswerScript, lo
       this.timers.push(window.setTimeout(fn, ms));
     }
 
+    /** 지금 턴의 인식 신뢰도 (대본이 정한다) */
+    private confidence = 0.9;
+
     private emit(index: number, transcript: string, isFinal: boolean) {
       if (!this.running) return;
       trace(`emit #${index} ${isFinal ? 'final' : 'interim'} len=${transcript.length} have=${this.results.length}`);
-      this.results[index] = { isFinal, length: 1, 0: { transcript, confidence: 0.9 } };
+      this.results[index] = { isFinal, length: 1, 0: { transcript, confidence: this.confidence } };
       const ev = new Event('result') as Event & { resultIndex: number; results: unknown };
       ev.resultIndex = index;
       const list: Record<number, ResultLike> & { length: number } = { length: this.results.length };
@@ -144,6 +149,7 @@ export function installFakeRecognition(world: SimWorld, script: AnswerScript, lo
 
       const rate = answer.rate ?? 5;
       const pause = answer.pauseMs ?? 350;
+      this.confidence = answer.confidence ?? 0.9;
       const sentences = splitSentences(answer.text);
       log(`턴 ${script.turn}: ${sentences.length}문장, ${countSyllables(answer.text)}음절`);
 

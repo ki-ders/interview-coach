@@ -42,7 +42,11 @@ export function makePreviewState(): SessionState {
     sttSupported: true,
     notice: null,
     faceVisible: true,
+    gazeOnTarget: true,
     turnHint: null,
     llmSummaryPending: false,
+    gazeGuideTarget: null,
+    blindViolations: [],
+    video: null,
   };
 }

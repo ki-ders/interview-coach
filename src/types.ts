@@ -83,7 +83,8 @@ export type LiveMetrics = Record<MetricKey, number>;
 
 export interface LiveAlert {
   id: number;
-  key: MetricKey;
+  /** 지표 키, 또는 블라인드 면접 규정 위반 */
+  key: MetricKey | 'blind';
   text: string;
   t: number;
 }
@@ -106,6 +107,10 @@ export interface AnswerRecord {
   metrics: LiveMetrics;
   followUpAsked: string | null;
   followUpReason: string | null;
+  /** 음성 인식기가 준 평균 신뢰도(0~1). 브라우저가 주지 않으면 null */
+  clarity: number | null;
+  /** 잘 못 알아들어 다시 말해 달라고 했는지 */
+  reasked: boolean;
 }
 
 export interface SpeechAnalysis {
@@ -151,6 +156,19 @@ export interface SessionReport {
   timeline: { t: number; metrics: LiveMetrics }[];
   durationSec: number;
   alerts: LiveAlert[];
+  /** 블라인드 면접 모드였다면 규정 위반 내역. 하나라도 있으면 부적격 */
+  blind?: { violations: BlindViolation[]; disqualified: boolean };
+}
+
+export type BlindCategory = 'name' | 'school' | 'family' | 'award' | 'examNo';
+
+export interface BlindViolation {
+  category: BlindCategory;
+  label: string;
+  /** 위반이 잡힌 대목 */
+  excerpt: string;
+  /** 몇 번째 문항에서 (0부터) */
+  questionIndex: number;
 }
 
 export interface SessionConfig {
@@ -162,4 +180,10 @@ export interface SessionConfig {
   /** 면접관 두뇌: 'none' | 'gemini' | 'claude' */
   llmProvider: 'none' | 'gemini' | 'claude';
   apiKey: string;
+  /** 시선 안내: 렌즈 한 점만 표시(fixed) / 면접관과 렌즈 사이를 오가는 점을 따라가기(guided) */
+  gazeGuide: 'fixed' | 'guided';
+  /** 블라인드 면접: 성명·출신 학교·가족·수상·수험번호를 말하면 부적격 */
+  blindMode: boolean;
+  /** 면접 영상을 녹화해 끝나고 파일로 준다 (기기 밖으로 나가지 않는다) */
+  recordVideo: boolean;
 }

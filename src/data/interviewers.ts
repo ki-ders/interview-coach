@@ -20,7 +20,7 @@ export const INTERVIEWERS: Interviewer[] = [
       browAngle: 0,
       beard: false,
     },
-    voice: { pitch: 1.1, rate: 0.98, preferFemale: true },
+    voice: { pitch: 1.12, rate: 1.0, preferFemale: true },
     strictness: 1.0,
     lines: {
       greeting: [
@@ -61,7 +61,7 @@ export const INTERVIEWERS: Interviewer[] = [
       browAngle: -9,
       beard: false,
     },
-    voice: { pitch: 1.0, rate: 0.95, preferFemale: false },
+    voice: { pitch: 0.92, rate: 0.92, preferFemale: false },
     strictness: 0.85,
     lines: {
       greeting: [
@@ -102,7 +102,7 @@ export const INTERVIEWERS: Interviewer[] = [
       browAngle: -6,
       beard: true,
     },
-    voice: { pitch: 0.85, rate: 0.92, preferFemale: false },
+    voice: { pitch: 0.78, rate: 0.88, preferFemale: false },
     strictness: 0.9,
     lines: {
       greeting: [
@@ -140,7 +140,7 @@ export const INTERVIEWERS: Interviewer[] = [
       browAngle: 13,
       beard: false,
     },
-    voice: { pitch: 0.8, rate: 1.03, preferFemale: false },
+    voice: { pitch: 0.72, rate: 1.08, preferFemale: false },
     strictness: 1.25,
     lines: {
       greeting: [
@@ -181,7 +181,7 @@ export const INTERVIEWERS: Interviewer[] = [
       browAngle: 10,
       beard: false,
     },
-    voice: { pitch: 0.88, rate: 1.0, preferFemale: false },
+    voice: { pitch: 0.84, rate: 0.97, preferFemale: false },
     strictness: 1.15,
     lines: {
       greeting: ['오현중입니다. 질문 드리겠습니다.', '오현중입니다. 준비되셨으면 시작하죠.'],

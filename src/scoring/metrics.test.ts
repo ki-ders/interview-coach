@@ -76,6 +76,7 @@ describe('좋은 수행', () => {
     stutterPer100: 0.4,
     sentenceEndRatio: 0.8,
     startDelaySec: 1.5,
+    clarity: null,
     available: true,
   });
 
@@ -272,6 +273,7 @@ describe('말투 / 끊김', () => {
       stutterPer100: 0,
       sentenceEndRatio: 0.8,
       startDelaySec: 1.5,
+      clarity: null,
       available: true,
     }).speech;
     const ok = computeMetrics(d, {
@@ -280,6 +282,7 @@ describe('말투 / 끊김', () => {
       stutterPer100: 0,
       sentenceEndRatio: 0.8,
       startDelaySec: 1.5,
+      clarity: null,
       available: true,
     }).speech;
     expect(fast).toBeLessThan(ok);
@@ -357,6 +360,7 @@ describe('말투 — 침묵과 시작 지연', () => {
     stutterPer100: 0.4,
     sentenceEndRatio: 0.8,
     startDelaySec: 1.5,
+    clarity: null,
     available: true,
     ...over,
   });
@@ -389,8 +393,8 @@ describe('말투 — 침묵과 시작 지연', () => {
       wordCount,
     });
     const t = textStatsOf([
-      { speech: speech(40), voicedSec: 20, latencySec: 2 },
-      { speech: speech(0), voicedSec: 0, latencySec: 40 }, // 침묵 — 말투 통계엔 안 들어가지만 지연에는 들어간다
+      { speech: speech(40), voicedSec: 20, latencySec: 2, clarity: null },
+      { speech: speech(0), voicedSec: 0, latencySec: 40, clarity: null }, // 침묵 — 말투 통계엔 안 들어가지만 지연에는 들어간다
     ]);
     expect(t.available).toBe(true);
     expect(t.startDelaySec).toBe(21);

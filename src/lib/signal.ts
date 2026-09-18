@@ -295,13 +295,12 @@ export class ResampledRing {
 }
 
 /** 0~100 점수를 등급 문자열로 */
+/** S / A / B / C / D / F 여섯 단계 */
 export function gradeOf(score: number): string {
-  if (score >= 92) return 'A+';
-  if (score >= 85) return 'A';
-  if (score >= 78) return 'B+';
+  if (score >= 90) return 'S';
+  if (score >= 80) return 'A';
   if (score >= 70) return 'B';
-  if (score >= 62) return 'C+';
-  if (score >= 54) return 'C';
-  if (score >= 45) return 'D';
+  if (score >= 60) return 'C';
+  if (score >= 50) return 'D';
   return 'F';
 }

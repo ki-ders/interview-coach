@@ -14,6 +14,8 @@ interface Props {
   onAbort: () => void;
   onReset: () => void;
   showDebug: boolean;
+  /** 시선 안내 점이 화면 어디에 있는지 (0~1) — 분석기의 기준점을 옮기는 데 쓴다 */
+  onGuideMeasured?: (fx: number, fy: number) => void;
 }
 
 const ORDER: MetricKey[] = ['gaze', 'gesture', 'speech', 'voice', 'calm'];
@@ -58,6 +60,7 @@ export function InterviewScreen({
   onAbort,
   onReset,
   showDebug,
+  onGuideMeasured,
 }: Props) {
   const [a, b] = interviewerIds.map(getInterviewer);
   const running = state.phase === 'running';
@@ -90,7 +93,15 @@ export function InterviewScreen({
             </div>
             <div className="room__timer">{fmt(state.elapsedSec)}</div>
 
-            <InterviewRoom pair={[a, b]} states={state.avatars} speakingId={speakerId} />
+            <InterviewRoom
+              pair={[a, b]}
+              states={state.avatars}
+              speakingId={speakerId}
+              gazeOnTarget={state.gazeOnTarget}
+              running={running}
+              guideTarget={state.gazeGuideTarget}
+              onGuideMeasured={onGuideMeasured}
+            />
 
             {state.subtitle ? (
               <div
@@ -156,7 +167,7 @@ export function InterviewScreen({
           {state.alerts.length > 0 && (
             <div className="alerts">
               {state.alerts.slice(-2).map((al) => (
-                <div className="alert" key={al.id}>
+                <div className={`alert${al.key === 'blind' ? ' alert--blind' : ''}`} key={al.id}>
                   <span aria-hidden>⚠</span>
                   <span>{al.text}</span>
                 </div>

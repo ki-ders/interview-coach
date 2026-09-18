@@ -279,6 +279,8 @@ export interface TextStats {
   sentenceEndRatio: number;
   /** 질문이 끝나고 첫 마디까지 걸린 평균 시간(초). 침묵한 답변은 답변 시간 전체로 본다 */
   startDelaySec: number;
+  /** 또박또박함 — 음성 인식기의 평균 신뢰도(0~1). 브라우저가 주지 않으면 null */
+  clarity: number | null;
   available: boolean;
 }
 
@@ -288,12 +290,13 @@ export const emptyText = (): TextStats => ({
   stutterPer100: 0,
   sentenceEndRatio: 0,
   startDelaySec: 0,
+  clarity: null,
   available: false,
 });
 
 /** 답변 기록들을 합쳐 텍스트 지표를 만든다. 받아쓰기가 4어절 미만인 답변은 말투 통계에서 뺀다 */
 export function textStatsOf(
-  items: Pick<AnswerRecord, 'speech' | 'voicedSec' | 'latencySec'>[],
+  items: Pick<AnswerRecord, 'speech' | 'voicedSec' | 'latencySec' | 'clarity'>[],
 ): TextStats {
   const usable = items.filter((i) => i.speech.wordCount >= 4);
   if (!usable.length) return emptyText();
@@ -313,12 +316,17 @@ export function textStatsOf(
   }
   // 시작 지연은 침묵한 답변까지 포함해야 "말을 안 한 것"이 반영된다
   const delay = items.reduce((s, i) => s + i.latencySec, 0) / items.length;
+  const withClarity = usable.filter((i) => i.clarity !== null && i.clarity !== undefined);
+  const clarity = withClarity.length
+    ? withClarity.reduce((s, i) => s + (i.clarity as number), 0) / withClarity.length
+    : null;
   return {
     syllablesPerSec: syll / Math.max(voiced, 1),
     fillerRatio: words ? fillers / words : 0,
     stutterPer100: words ? (stutters / words) * 100 : 0,
     sentenceEndRatio: endSum / usable.length,
     startDelaySec: delay,
+    clarity,
     available: true,
   };
 }
@@ -358,6 +366,8 @@ export function scoreSpeech(d: DerivedStats, t: TextStats): number {
     parts.push([lowerBetter(t.fillerRatio, 0.03, 0.18), 0.2]);
     parts.push([lowerBetter(t.stutterPer100, 1, 9), 0.22]);
     parts.push([higherBetter(t.sentenceEndRatio, 0.3, 0.85), 0.12]);
+    // 또박또박함: 인식기가 자신 있게 받아 적었는지
+    if (t.clarity !== null) parts.push([higherBetter(t.clarity, 0.55, 0.92), 0.25]);
   }
   // 답변 시간 대부분을 침묵으로 보냈다면 끊김이 없어도 "매끄러웠다"고 할 수 없다.
   // 단, 답변을 막 시작한 실시간 창(몇 초)에서는 비율이 의미 없으므로 적용하지 않는다.
@@ -595,6 +605,14 @@ export function buildBreakdown(d: DerivedStats, t: TextStats, m: LiveMetrics): M
         issue: '문장을 끝맺지 않고 흐리는 경우가 많았습니다.',
       },
     );
+    if (t.clarity !== null) {
+      speech.push({
+        label: '또박또박함 (인식 신뢰도)',
+        value: pct(t.clarity),
+        score: higherBetter(t.clarity, 0.55, 0.92),
+        issue: '발음이 뭉개져 인식기가 자신 없게 받아 적었습니다. 입을 크게 벌리고 문장 끝까지 힘을 유지하세요.',
+      });
+    }
   }
   out.push({
     key: 'speech',

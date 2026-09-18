@@ -1524,3 +1524,758 @@ textarea.input {
   padding-left: 18px;
   line-height: 1.55;
 }
+
+/* ── 면접실 (한 공간, 2.5D 면접관) ────────────────────────────── */
+.office {
+  --wall: color-mix(in srgb, var(--surface-2) 78%, #b9a58c 22%);
+  --wall-side: color-mix(in srgb, var(--wall) 82%, #000 18%);
+  --floor: color-mix(in srgb, var(--surface-3) 60%, #8b7460 40%);
+  --wood: color-mix(in srgb, var(--surface-3) 34%, #8a6b4e 66%);
+  --wood-dark: color-mix(in srgb, var(--wood) 70%, #000 30%);
+  position: relative;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  isolation: isolate;
+  background: var(--wall);
+}
+
+:root[data-theme='dark'] .office {
+  --wall: color-mix(in srgb, var(--surface-2) 70%, #6b5a48 30%);
+  --floor: color-mix(in srgb, var(--surface-3) 55%, #4a3b2e 45%);
+  --wood: color-mix(in srgb, var(--surface-3) 30%, #6f5238 70%);
+}
+
+.office__scene,
+.office__seats {
+  position: absolute;
+  inset: 0;
+}
+
+.office__scene {
+  z-index: 1;
+}
+
+/* 뒷벽: 가운데 소실점으로 모이는 사다리꼴 옆벽 */
+.office__wall {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--wall) 88%, #fff 12%) 0%,
+    var(--wall) 55%,
+    color-mix(in srgb, var(--wall) 86%, #000 14%) 100%
+  );
+}
+
+.office__wall::before {
+  /* 왼쪽 옆벽 */
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, var(--wall-side), color-mix(in srgb, var(--wall-side) 60%, var(--wall) 40%));
+  clip-path: polygon(0 0, 9% 5%, 9% 58%, 0 72%);
+}
+
+.office__wall::after {
+  /* 오른쪽 옆벽 */
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(270deg, var(--wall-side), color-mix(in srgb, var(--wall-side) 60%, var(--wall) 40%));
+  clip-path: polygon(100% 0, 91% 5%, 91% 58%, 100% 72%);
+}
+
+/* 창문 (블라인드) */
+.office__window {
+  position: absolute;
+  left: 12%;
+  top: 9%;
+  width: 17%;
+  height: 40%;
+  border-radius: 3px;
+  background:
+    repeating-linear-gradient(180deg, transparent 0 6px, rgba(0, 0, 0, 0.08) 6px 7px),
+    linear-gradient(180deg, #cfe0ee, #e9f1f7 55%, #d9e6ef);
+  box-shadow:
+    inset 0 0 0 3px color-mix(in srgb, var(--wall) 50%, #fff 50%),
+    0 4px 14px rgba(0, 0, 0, 0.12);
+}
+
+:root[data-theme='dark'] .office__window {
+  background:
+    repeating-linear-gradient(180deg, transparent 0 6px, rgba(0, 0, 0, 0.18) 6px 7px),
+    linear-gradient(180deg, #2c3d55, #1d2a3d 55%, #172232);
+}
+
+/* 오른쪽 벽 선반과 액자 */
+.office__shelf {
+  position: absolute;
+  right: 12%;
+  top: 30%;
+  width: 16%;
+  height: 4px;
+  background: var(--wood-dark);
+  border-radius: 2px;
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.18);
+}
+
+.office__shelf::before,
+.office__shelf::after {
+  content: '';
+  position: absolute;
+  bottom: 4px;
+  border-radius: 2px;
+}
+
+.office__shelf::before {
+  /* 책 몇 권 */
+  left: 12%;
+  width: 34%;
+  height: 26px;
+  background: linear-gradient(90deg, #7a4b4b 0 30%, #4a5f8a 30% 55%, #6a7a52 55% 78%, #8a6f3a 78% 100%);
+}
+
+.office__shelf::after {
+  /* 화분 */
+  right: 10%;
+  width: 14px;
+  height: 20px;
+  background: #5f8a5a;
+  border-radius: 50% 50% 4px 4px;
+}
+
+.office__frame {
+  position: absolute;
+  right: 14%;
+  top: 11%;
+  width: 11%;
+  height: 12%;
+  border: 3px solid var(--wood-dark);
+  background: linear-gradient(135deg, #8fb0c9, #d7e2c3 60%, #b6a37c);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.15);
+}
+
+/* 바닥: 벽 아래에서 앞으로 퍼진다 */
+.office__floor {
+  position: absolute;
+  inset: 0;
+  background:
+    repeating-linear-gradient(90deg, transparent 0 9%, rgba(0, 0, 0, 0.05) 9% 9.4%),
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--floor) 80%, #000 20%),
+      var(--floor) 45%,
+      color-mix(in srgb, var(--floor) 85%, #fff 15%)
+    );
+  clip-path: polygon(9% 58%, 91% 58%, 100% 72%, 100% 100%, 0 100%, 0 72%);
+}
+
+/* 긴 책상: 윗면(사다리꼴) + 앞판. 면접관 카드 위에 겹쳐 하반신을 가린다 */
+.office__deskTop {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--wood) 78%, #fff 22%),
+    var(--wood) 60%,
+    color-mix(in srgb, var(--wood) 92%, #000 8%)
+  );
+  clip-path: polygon(15% 67%, 85% 67%, 97% 79%, 3% 79%);
+}
+
+.office__deskFront {
+  position: absolute;
+  left: 3%;
+  right: 3%;
+  top: 79%;
+  bottom: 0;
+  z-index: 3;
+  background: linear-gradient(180deg, var(--wood-dark), color-mix(in srgb, var(--wood-dark) 80%, #000 20%));
+  border-top: 2px solid color-mix(in srgb, var(--wood) 60%, #fff 40%);
+}
+
+/* 위에서 내려오는 조명과 가장자리 비네트 */
+.office__light {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 60% 50% at 50% 10%, rgba(255, 255, 255, 0.16), transparent 70%),
+    radial-gradient(ellipse 90% 80% at 50% 55%, transparent 60%, rgba(0, 0, 0, 0.22) 100%);
+}
+
+/* 면접관 자리 */
+.seat {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 34%;
+}
+
+.seat--left {
+  left: 14%;
+}
+
+.seat--right {
+  right: 14%;
+}
+
+.seat__card {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 26%;
+  aspect-ratio: 1 / 1.12;
+  z-index: 2;
+  overflow: hidden;
+  transform-origin: 50% 100%;
+  transition:
+    transform 0.45s cubic-bezier(0.2, 0.8, 0.2, 1),
+    filter 0.45s;
+  filter: brightness(0.94) saturate(0.95);
+  /* 사진의 배경이 벽에 스미도록 가장자리를 흐린다 */
+  -webkit-mask-image: radial-gradient(ellipse 58% 64% at 50% 44%, #000 52%, transparent 100%);
+  mask-image: radial-gradient(ellipse 58% 64% at 50% 44%, #000 52%, transparent 100%);
+}
+
+.seat--left .seat__card {
+  transform: perspective(1100px) rotateY(11deg);
+}
+
+.seat--right .seat__card {
+  transform: perspective(1100px) rotateY(-11deg);
+}
+
+.seat--active .seat__card {
+  filter: brightness(1.04) saturate(1.02);
+}
+
+.seat--left.seat--active .seat__card {
+  transform: perspective(1100px) rotateY(7deg) translateY(-1.5%) scale(1.03);
+}
+
+.seat--right.seat--active .seat__card {
+  transform: perspective(1100px) rotateY(-7deg) translateY(-1.5%) scale(1.03);
+}
+
+/* 책상 위에 떨어지는 그림자 */
+.seat__shadow {
+  position: absolute;
+  left: 10%;
+  right: 10%;
+  top: 67%;
+  height: 10%;
+  z-index: 4;
+  pointer-events: none;
+  background: radial-gradient(ellipse 50% 60% at 50% 30%, rgba(0, 0, 0, 0.28), transparent 70%);
+}
+
+/* 책상 앞판의 명패 */
+.plate--desk {
+  position: absolute;
+  left: 50%;
+  top: 80.5%;
+  transform: translateX(-50%);
+  z-index: 4;
+  padding: 5px 12px;
+  min-width: 56%;
+  background: linear-gradient(180deg, var(--surface), color-mix(in srgb, var(--surface) 88%, #000 12%));
+  border: 1px solid color-mix(in srgb, var(--border-strong) 70%, #000 30%);
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.28);
+  transition:
+    box-shadow 0.3s,
+    border-color 0.3s;
+}
+
+.plate--desk.plate--active {
+  border-color: var(--accent);
+  box-shadow:
+    0 0 0 3px var(--accent-soft),
+    0 6px 14px rgba(0, 0, 0, 0.28);
+}
+
+.seat .tile__note {
+  right: 18%;
+  bottom: 30%;
+}
+
+/* 렌즈 표시: 사용자가 바라볼 지점 */
+.lens {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 5px 14px 5px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface) 84%, transparent);
+  border: 1px solid var(--border);
+  backdrop-filter: blur(6px);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-dim);
+  white-space: nowrap;
+  transition:
+    border-color 0.3s,
+    color 0.3s;
+}
+
+.lens__ring {
+  position: relative;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  border: 2.5px solid currentColor;
+  display: grid;
+  place-items: center;
+}
+
+.lens__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.lens--on {
+  color: var(--good);
+  border-color: color-mix(in srgb, var(--good) 50%, var(--border));
+}
+
+.lens--away {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+
+.lens--away .lens__ring {
+  animation: lens-pulse 1s ease-in-out infinite;
+}
+
+.lens--off .lens__ring {
+  animation: lens-pulse 2.2s ease-in-out infinite;
+}
+
+@keyframes lens-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 45%, transparent);
+  }
+  50% {
+    transform: scale(1.12);
+    box-shadow: 0 0 0 7px transparent;
+  }
+}
+
+@media (max-width: 560px) {
+  .office {
+    aspect-ratio: 4 / 3;
+  }
+  .seat {
+    width: 38%;
+  }
+  .seat--left {
+    left: 9%;
+  }
+  .seat--right {
+    right: 9%;
+  }
+  .lens {
+    font-size: 11.5px;
+    padding: 4px 10px 4px 5px;
+  }
+  .plate--desk {
+    padding: 3px 8px;
+  }
+  .plate--desk .plate__name {
+    font-size: 12px;
+  }
+  .plate--desk .plate__role {
+    display: none;
+  }
+}
+
+/* 시선 안내 점: 렌즈와 면접관 얼굴 사이를 오간다 */
+.gazeguide {
+  position: absolute;
+  z-index: 7;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+  transition:
+    left 0.7s cubic-bezier(0.3, 0.8, 0.3, 1),
+    top 0.7s cubic-bezier(0.3, 0.8, 0.3, 1);
+}
+
+.gazeguide__dot {
+  position: absolute;
+  left: -11px;
+  top: -11px;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 85%, #fff 15%);
+  border: 3px solid #fff;
+  box-shadow:
+    0 0 0 4px color-mix(in srgb, var(--accent) 35%, transparent),
+    0 4px 12px rgba(0, 0, 0, 0.35);
+  animation: guide-breathe 1.4s ease-in-out infinite;
+}
+
+.gazeguide--lens .gazeguide__dot {
+  /* 렌즈 표시 위에서는 작게, 링만 */
+  width: 14px;
+  height: 14px;
+  left: -7px;
+  top: -7px;
+  border-width: 2px;
+}
+
+.gazeguide__hint {
+  position: absolute;
+  left: 16px;
+  top: -9px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  background: var(--accent);
+  padding: 1px 7px;
+  border-radius: 999px;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+@keyframes guide-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.18);
+  }
+}
+
+/* 블라인드 규정 위반 경고 */
+.alert--blind {
+  border-color: var(--bad);
+  background: color-mix(in srgb, var(--bad) 12%, var(--surface));
+  color: var(--bad);
+  font-weight: 700;
+}
+
+/* 리포트: 부적격 / 등급 */
+.score-ring__grade--dq {
+  font-size: 15px;
+  color: var(--bad);
+  letter-spacing: 0;
+}
+
+.blind-box {
+  border: 1px solid var(--bad);
+  background: color-mix(in srgb, var(--bad) 8%, var(--surface));
+  border-radius: var(--radius);
+  padding: 14px 16px;
+}
+
+.blind-box h3 {
+  color: var(--bad);
+  font-size: 15px;
+  margin-bottom: 8px;
+}
+
+.blind-box li {
+  margin: 4px 0;
+  font-size: 13.5px;
+}
+
+.blind-box__cat {
+  font-weight: 700;
+  margin-right: 6px;
+}
+
+.blind-box__quote {
+  color: var(--text-dim);
+}
+
+/* 리포트: 영상 */
+.video-box video {
+  display: block;
+  width: 100%;
+  max-height: 420px;
+  background: #000;
+  border-radius: var(--radius-sm);
+}
+
+/* 등급 척도 */
+.grade-scale {
+  display: flex;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.grade-scale span {
+  flex: 1;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 0;
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--text-faint);
+}
+
+.grade-scale span.on {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+/* 면접실 안에서는 벡터 타일의 자체 벽·책상을 지운다 (방의 벽과 긴 책상이 대신한다) */
+.seat .room__wall {
+  fill: transparent;
+}
+
+.seat .room__desk,
+.seat .room__deskEdge {
+  display: none;
+}
+
+/* ── 면접장 배경 사진 ─────────────────────────────────────────── */
+.hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 18px 0 16px;
+}
+
+.backdrop__row {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.backdrop__preview {
+  width: 200px;
+  aspect-ratio: 16 / 9;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  display: grid;
+  place-items: center;
+  flex: none;
+}
+
+.backdrop__preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* 사용자가 올린 배경: 벽·바닥 대신 사진을 깐다 */
+.office__backdrop {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.office--photo .office__wall,
+.office--photo .office__floor {
+  display: none;
+}
+
+.office--photo .office__light {
+  background:
+    radial-gradient(ellipse 90% 80% at 50% 55%, transparent 65%, rgba(0, 0, 0, 0.28) 100%);
+}
+
+/* ── 면접실 사실감: 천장 조명·문·걸레받이·책상 소품 ───────────── */
+.office__wall {
+  /* 은은한 페인트 질감 */
+  background-image:
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.025) 0 2px, transparent 2px 5px),
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--wall) 88%, #fff 12%) 0%,
+      var(--wall) 55%,
+      color-mix(in srgb, var(--wall) 86%, #000 14%) 100%
+    );
+}
+
+/* 천장: 소실점으로 모이는 띠와 형광등 패널 */
+.office__ceiling {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 5%;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--wall) 70%, #fff 30%), color-mix(in srgb, var(--wall) 92%, #fff 8%));
+  clip-path: polygon(0 0, 100% 0, 91% 100%, 9% 100%);
+}
+
+.office__ceiling span {
+  position: absolute;
+  top: 25%;
+  height: 40%;
+  border-radius: 2px;
+  background: linear-gradient(180deg, #fff, #f1f3ea);
+  box-shadow: 0 0 10px 3px rgba(255, 255, 240, 0.55);
+}
+
+.office__ceiling span:nth-child(1) {
+  left: 22%;
+  width: 16%;
+}
+
+.office__ceiling span:nth-child(2) {
+  left: 42%;
+  width: 16%;
+}
+
+.office__ceiling span:nth-child(3) {
+  left: 62%;
+  width: 16%;
+}
+
+:root[data-theme='dark'] .office__ceiling span {
+  background: linear-gradient(180deg, #e9ecdf, #cfd3c4);
+  box-shadow: 0 0 12px 3px rgba(255, 250, 220, 0.25);
+}
+
+/* 왼쪽 옆벽의 문 */
+.office__door {
+  position: absolute;
+  left: 2.2%;
+  top: 14%;
+  width: 4.6%;
+  height: 46%;
+  background: linear-gradient(90deg, var(--wood-dark), var(--wood));
+  clip-path: polygon(0 0, 100% 12%, 100% 100%, 0 100%);
+  box-shadow: inset 0 0 0 2px rgba(0, 0, 0, 0.18);
+}
+
+.office__door::after {
+  /* 손잡이 */
+  content: '';
+  position: absolute;
+  right: 18%;
+  top: 52%;
+  width: 4px;
+  height: 4px;
+  border-radius: 999px;
+  background: #d9c27a;
+}
+
+/* 걸레받이 — 벽과 바닥이 만나는 선 */
+.office__baseboard {
+  position: absolute;
+  left: 9%;
+  right: 9%;
+  top: 57%;
+  height: 1.4%;
+  background: color-mix(in srgb, var(--wall) 60%, #000 40%);
+  opacity: 0.55;
+}
+
+/* 책상 위 서류와 물컵 (면접관 앞) */
+.office__paper {
+  position: absolute;
+  top: 70%;
+  width: 7%;
+  height: 4.5%;
+  background: linear-gradient(180deg, #fbfbf7, #eceae0);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  transform: skewX(-6deg);
+}
+
+.office__paper::before {
+  content: '';
+  position: absolute;
+  left: 12%;
+  right: 12%;
+  top: 30%;
+  height: 40%;
+  background: repeating-linear-gradient(180deg, rgba(0, 0, 0, 0.18) 0 1px, transparent 1px 3px);
+}
+
+.office__paper--l {
+  left: 21%;
+}
+
+.office__paper--r {
+  right: 21%;
+}
+
+.office__cup {
+  position: absolute;
+  top: 66.5%;
+  width: 2.2%;
+  height: 6%;
+  border-radius: 2px 2px 3px 3px;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0.2) 45%, rgba(255, 255, 255, 0.5));
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  box-shadow: 0 2px 3px rgba(0, 0, 0, 0.2);
+}
+
+.office__cup::after {
+  /* 물 */
+  content: '';
+  position: absolute;
+  left: 1px;
+  right: 1px;
+  bottom: 1px;
+  height: 55%;
+  background: rgba(150, 200, 230, 0.45);
+}
+
+.office__cup--l {
+  left: 40%;
+}
+
+.office__cup--r {
+  right: 40%;
+}
+
+@media (max-width: 560px) {
+  .office__paper,
+  .office__cup,
+  .office__door {
+    display: none;
+  }
+}
+
+/* 벡터 면접관은 배경이 투명하므로 가장자리를 흐릴 필요가 없다 (사진일 때만 마스크) */
+.seat__card:has(.photoface[data-status='fallback']) {
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+
+.plate--desk .plate__name,
+.plate--desk .plate__tag {
+  white-space: nowrap;
+}
+
+@media (max-width: 560px) {
+  .plate--desk {
+    top: 80%;
+    gap: 0;
+    line-height: 1.25;
+  }
+  .plate--desk .plate__tag {
+    font-size: 10px;
+  }
+  .lens__label {
+    display: none;
+  }
+  .lens {
+    padding: 4px;
+  }
+}

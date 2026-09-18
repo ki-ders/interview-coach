@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
   AnswerRecord,
+  BlindViolation,
   Interviewer,
   LiveAlert,
   LiveMetrics,
@@ -30,6 +31,9 @@ import {
 import { analyzeRelevance, analyzeSpeech } from '../scoring/korean';
 import { ackOf, closingOf, decideFollowUp, greetingOf, silenceNudgeOf, summarizeContent } from './brain';
 import { decideTurnPolicy } from './turn';
+import { BLIND_RULE_LINE, blindWarningLine, detectBlindViolations } from './blind';
+import { judgeIntelligibility, reaskLineOf } from './clarity';
+import { SessionRecorder, type Recording } from '../lib/recorder';
 import { createInterviewerLlm, type InterviewerLlm } from './llm';
 import { clamp, gradeOf, weighted } from '../lib/signal';
 import { startTicker } from '../lib/ticker';
@@ -91,10 +95,18 @@ export interface SessionState {
   sttSupported: boolean;
   notice: string | null;
   faceVisible: boolean;
+  /** 최근 0.6초 동안 카메라(정면)를 보고 있었는지. 얼굴이 없으면 null */
+  gazeOnTarget: boolean | null;
   /** 답변 종료 판단 상태 ("말이 이어질 것 같아 기다리는 중" 등). 듣는 중이 아니면 null */
   turnHint: string | null;
   /** 리포트가 뜬 뒤 LLM 총평을 기다리는 중 */
   llmSummaryPending: boolean;
+  /** 시선 안내 모드에서 지금 바라볼 곳: 렌즈 또는 면접관 id. 고정 모드면 null (렌즈 표시만) */
+  gazeGuideTarget: 'lens' | string | null;
+  /** 블라인드 면접 규정 위반 (면접 중 누적) */
+  blindViolations: BlindViolation[];
+  /** 녹화된 면접 영상 (리포트 단계) */
+  video: { url: string; mimeType: string; sizeBytes: number; durationMs: number } | null;
 }
 
 const INITIAL_LIVE: LiveMetrics = { gaze: 70, gesture: 70, speech: 70, voice: 70, calm: 70 };
@@ -140,8 +152,12 @@ const initialState = (): SessionState => ({
   sttSupported: true,
   notice: null,
   faceVisible: true,
+  gazeOnTarget: null,
   turnHint: null,
   llmSummaryPending: false,
+  gazeGuideTarget: null,
+  blindViolations: [],
+  video: null,
 });
 
 export function useSession(deps: SessionDeps = defaultDeps) {
@@ -199,6 +215,9 @@ export function useSession(deps: SessionDeps = defaultDeps) {
   const calibRef = useRef({ collector: new CalibrationCollector(), active: false });
   const answersRef = useRef<AnswerRecord[]>([]);
   const speakHandleRef = useRef<{ cancel(): void } | null>(null);
+  const blindRef = useRef<BlindViolation[]>([]);
+  const recorderRef = useRef(new SessionRecorder());
+  const videoUrlRef = useRef<string | null>(null);
 
   const releaseMedia = useCallback(() => {
     stopTickerRef.current?.();
@@ -266,9 +285,21 @@ export function useSession(deps: SessionDeps = defaultDeps) {
       timeline.push({ t, metrics });
     }
 
+    // 시선 표시등: 최근 0.6초의 얼굴 샘플 중 절반 이상이 정면이면 켠다
+    let onTargetN = 0;
+    let faceN = 0;
+    for (let i = win.length - 1; i >= 0 && t - win[i].t < 600; i--) {
+      const f = win[i].face;
+      if (!f) continue;
+      faceN++;
+      if (f.onTarget) onTargetN++;
+    }
+    const gazeOnTarget = faceN ? onTargetN * 2 >= faceN : null;
+
     if (!mountedRef.current) return;
     setState((s) => ({
       ...s,
+      gazeOnTarget,
       // 답변 중이 아니면 음성 지표는 직전 값을 유지한다 (면접관이 말하는 동안 요동치지 않도록)
       live: d.voiceAvailable ? metrics : { ...metrics, voice: s.live.voice, speech: s.live.speech },
       micLevel,
@@ -485,6 +516,22 @@ export function useSession(deps: SessionDeps = defaultDeps) {
     [patch],
   );
 
+  /** 시선 안내 모드에서 바라볼 곳을 옮긴다 (고정 모드에서는 아무것도 하지 않는다) */
+  const guide = useCallback(
+    (target: 'lens' | string) => {
+      if (configRef.current?.gazeGuide !== 'guided') return;
+      if (target === 'lens') visionRef.current.resetTarget();
+      patch({ gazeGuideTarget: target });
+    },
+    [patch],
+  );
+
+  /** 화면(InterviewRoom)이 안내 점의 실제 위치를 재서 알려주면 분석기의 기준점을 옮긴다 */
+  const onGuideMeasured = useCallback((fx: number, fy: number) => {
+    if (configRef.current?.gazeGuide !== 'guided') return;
+    visionRef.current.setTargetScreen(fx, fy);
+  }, []);
+
   const speak = useCallback(
     async (text: string, who: Interviewer, isQuestion = false) => {
       if (abortRef.current) return;
@@ -492,6 +539,8 @@ export function useSession(deps: SessionDeps = defaultDeps) {
       stt.gated = true;
       patch({ subtitle: { speakerId: who.id, text, isQuestion } });
       setAvatars(who.id, 'speaking');
+      // 말하는 사람을 보는 게 자연스럽다
+      guide(who.id);
       // 인식기가 면접관 목소리를 받아 적으면 그 문장과 비슷한 결과를 버리도록 알려둔다
       stt.ignoreText = text;
       const handle = ttsRef.current.speak(text, who);
@@ -501,7 +550,7 @@ export function useSession(deps: SessionDeps = defaultDeps) {
       ttsEndedAtRef.current = performance.now();
       // 게이트는 여기서 풀지 않는다 — 인식 결과가 늦게 도착하므로 listenForAnswer 가 잠시 뒤에 연다
     },
-    [patch, setAvatars],
+    [guide, patch, setAvatars],
   );
 
   const micGateSeq = useRef(0);
@@ -518,7 +567,7 @@ export function useSession(deps: SessionDeps = defaultDeps) {
   const listenForAnswer = useCallback(
     async (
       asker: Interviewer,
-    ): Promise<{ text: string; stats: RawStats; durationSec: number; latencySec: number }> => {
+    ): Promise<{ text: string; stats: RawStats; durationSec: number; latencySec: number; clarity: number | null }> => {
       const cfg = configRef.current!;
       const stt = sttRef.current;
       const stats = emptyStats();
@@ -539,6 +588,11 @@ export function useSession(deps: SessionDeps = defaultDeps) {
       let lastNudge = start;
       let lastShuffle = start;
       let lastHint: string | null = null;
+      // 답변 중 시선: 렌즈를 기본으로, 가끔 면접관 한 명을 2~3초 봤다가 돌아온다
+      guide('lens');
+      let guideShiftAt = start + 6000 + Math.random() * 4000;
+      let guideBackAt = 0;
+      let guideSide = Math.random() < 0.5 ? 0 : 1;
 
       while (!abortRef.current) {
         await sleep(200);
@@ -547,6 +601,18 @@ export function useSession(deps: SessionDeps = defaultDeps) {
         const sinceVoice = (now - lastUserVoiceRef.current) / 1000;
 
         if (elapsed > cfg.maxAnswerSec) break;
+
+        if (cfg.gazeGuide === 'guided') {
+          if (guideBackAt && now > guideBackAt) {
+            guideBackAt = 0;
+            guideShiftAt = now + 7000 + Math.random() * 4000;
+            guide('lens');
+          } else if (!guideBackAt && now > guideShiftAt) {
+            guideSide = 1 - guideSide;
+            guideBackAt = now + 2500 + Math.random() * 1000;
+            guide(cfg.interviewerIds[guideSide]);
+          }
+        }
 
         // 면접관들이 듣는 동안 자연스럽게 메모하거나 끄덕인다
         if (now - lastShuffle > 3500 + Math.random() * 3000) {
@@ -602,17 +668,22 @@ export function useSession(deps: SessionDeps = defaultDeps) {
       const durationSec = (performance.now() - start) / 1000;
       // 첫 마디까지 걸린 시간. 한마디도 없었으면 답변 시간 전체를 "기다린 시간"으로 본다
       const latencySec = heardSpeechRef.current ? Math.max(0, (heardAtRef.current - start) / 1000) : durationSec;
-      return { text: stt.endTurn(), stats, durationSec, latencySec };
+      const text = stt.endTurn();
+      guide(asker.id);
+      return { text, stats, durationSec, latencySec, clarity: stt.lastTurnConfidence };
     },
-    [openMicSoon, patch, setAvatars, speak],
+    [guide, openMicSoon, patch, setAvatars, speak],
   );
 
   /* ── 결과 산출 ─────────────────────────────────────────────── */
-  const finish = useCallback(() => {
+  const finish = useCallback(async () => {
     const cfg = configRef.current;
     answeringRef.current = false;
     sttRef.current.stop();
     ttsRef.current.stop();
+    patch({ gazeGuideTarget: null });
+    visionRef.current.resetTarget();
+    const recording: Recording | null = await recorderRef.current.stop().catch(() => null);
 
     const stats = sessionStatsRef.current;
     sealStats(stats);
@@ -640,10 +711,12 @@ export function useSession(deps: SessionDeps = defaultDeps) {
     // 엄격한 면접관일수록 같은 수행에 더 낮은 점수를 준다
     const total = clamp(Math.round(50 + (rawTotal - 50) * (2 - strictness)), 0, 100);
 
+    const blind = cfg?.blindMode ? { violations: blindRef.current, disqualified: blindRef.current.length > 0 } : undefined;
     const report: SessionReport = {
       total,
-      grade: gradeOf(total),
+      grade: blind?.disqualified ? '부적격' : gradeOf(total),
       breakdown,
+      blind,
       content: {
         score: content.score,
         summary: content.summary,
@@ -663,7 +736,13 @@ export function useSession(deps: SessionDeps = defaultDeps) {
     if (!mountedRef.current) return;
     const brain = llmRef.current;
     const wantSummary = !!brain && answers.some((a) => a.transcript.trim().length > 4);
-    setState((s) => ({ ...s, phase: 'report', report, subtitle: null, avatars: {}, llmSummaryPending: wantSummary }));
+    let video: SessionState['video'] = null;
+    if (recording) {
+      if (videoUrlRef.current) URL.revokeObjectURL(videoUrlRef.current);
+      videoUrlRef.current = URL.createObjectURL(recording.blob);
+      video = { url: videoUrlRef.current, mimeType: recording.mimeType, sizeBytes: recording.blob.size, durationMs: recording.durationMs };
+    }
+    setState((s) => ({ ...s, phase: 'report', report, subtitle: null, avatars: {}, llmSummaryPending: wantSummary, video }));
 
     if (brain && wantSummary && cfg) {
       const pair = [getInterviewer(cfg.interviewerIds[0]), getInterviewer(cfg.interviewerIds[1])];
@@ -680,7 +759,7 @@ export function useSession(deps: SessionDeps = defaultDeps) {
         });
       });
     }
-  }, [releaseMedia]);
+  }, [patch, releaseMedia]);
 
   /* ── 면접 진행 ─────────────────────────────────────────────── */
   const start = useCallback(async () => {
@@ -698,14 +777,45 @@ export function useSession(deps: SessionDeps = defaultDeps) {
     const a = getInterviewer(cfg.interviewerIds[0]);
     const b = getInterviewer(cfg.interviewerIds[1]);
     const pair = [a, b];
+    blindRef.current = [];
 
-    patch({ phase: 'running', questionIndex: 0, totalQuestions: cfg.questions.length });
+    patch({
+      phase: 'running',
+      questionIndex: 0,
+      totalQuestions: cfg.questions.length,
+      blindViolations: [],
+      gazeGuideTarget: cfg.gazeGuide === 'guided' ? 'lens' : null,
+      video: null,
+    });
+    if (cfg.recordVideo && streamRef.current) {
+      if (!recorderRef.current.start(streamRef.current)) {
+        patch({ notice: '이 브라우저는 영상 녹화를 지원하지 않아 녹화 없이 진행합니다.' });
+      }
+    }
+
+    /** 블라인드 규정 위반을 기록하고 면접관이 즉석에서 지적한다 */
+    const checkBlind = async (text: string, questionIndex: number, who: Interviewer) => {
+      if (!cfg.blindMode) return;
+      const found = detectBlindViolations(text, questionIndex);
+      if (!found.length) return;
+      blindRef.current = [...blindRef.current, ...found];
+      const t = performance.now() - startedAtRef.current;
+      for (const v of found) {
+        alertsRef.current = [...alertsRef.current, { id: ++alertSeq.current, key: 'blind' as const, text: `블라인드 규정 위반: ${v.label} 언급 — 부적격 사유`, t }].slice(-6);
+      }
+      patch({ blindViolations: blindRef.current, alerts: alertsRef.current.slice(-3) });
+      await speak(blindWarningLine(found[0]), who);
+    };
 
     try {
       await speak(greetingOf(a), a);
       if (!abortRef.current && b.id !== a.id) {
         await sleep(300);
         await speak(`저는 ${b.name}입니다. 함께 듣겠습니다.`, b);
+      }
+      if (!abortRef.current && cfg.blindMode) {
+        await sleep(300);
+        await speak(BLIND_RULE_LINE, a);
       }
 
       // LLM 이 방금 답변을 짚어 준 한 마디. 다음 질문 앞에 붙는다
@@ -722,7 +832,21 @@ export function useSession(deps: SessionDeps = defaultDeps) {
         if (abortRef.current) break;
 
         const askedAt = performance.now();
-        const first = await listenForAnswer(asker);
+        let first = await listenForAnswer(asker);
+        if (abortRef.current) break;
+        let reasked = false;
+
+        // 받아쓰기가 못 믿을 정도면 (신뢰도 낮음·인식된 글자가 너무 적음) 한 번 다시 말해 달라고 한다
+        const clarity = judgeIntelligibility({ text: first.text, confidence: first.clarity, voicedSec: first.stats.voicedMs / 1000 });
+        if (clarity.unclear && first.text.trim()) {
+          reasked = true;
+          await speak(reaskLineOf(asker), asker);
+          const again = await listenForAnswer(asker);
+          if (abortRef.current) break;
+          // 다시 말한 게 있으면 그걸 답변으로 삼는다 (처음 것은 오인식으로 보고 버린다)
+          if (again.text.trim()) first = { ...again, latencySec: first.latencySec };
+        }
+        await checkBlind(first.text, i, asker);
         if (abortRef.current) break;
 
         setAvatars(asker.id, 'writing', 'writing');
@@ -757,7 +881,20 @@ export function useSession(deps: SessionDeps = defaultDeps) {
         const [llm] = await Promise.all([llmPromise, sleep(1600 + Math.random() * 1400)]);
         if (abortRef.current) break;
 
-        if (llm) {
+        if (llm?.unclear && !reasked && !abortRef.current) {
+          // 두뇌가 "무슨 말인지 모르겠다"고 하면 되묻고, 다시 들은 답으로 규칙 채점만 한다
+          reasked = true;
+          await speak(reaskLineOf(asker), asker);
+          const again = await listenForAnswer(asker);
+          if (abortRef.current) break;
+          if (again.text.trim()) {
+            first = { ...again, latencySec: first.latencySec };
+            relevance = analyzeRelevance(q, first.text);
+            await checkBlind(first.text, i, asker);
+            if (abortRef.current) break;
+          }
+          setAvatars(asker.id, 'writing', 'writing');
+        } else if (llm) {
           relevance = {
             ...relevance,
             score: Math.round((relevance.score + llm.relevance) / 2),
@@ -794,6 +931,7 @@ export function useSession(deps: SessionDeps = defaultDeps) {
           }
           const second = await listenForAnswer(followUpAsker);
           if (!abortRef.current) {
+            await checkBlind(second.text, i, followUpAsker);
             mergedText = `${first.text} ${second.text}`.trim();
             mergedDuration += second.durationSec;
             mergeStats(mergedStats, second.stats);
@@ -826,10 +964,12 @@ export function useSession(deps: SessionDeps = defaultDeps) {
           relevance,
           metrics: computeMetrics(
             answerDerived,
-            textStatsOf([{ speech: finalSpeech, voicedSec, latencySec: first.latencySec }]),
+            textStatsOf([{ speech: finalSpeech, voicedSec, latencySec: first.latencySec, clarity: first.clarity }]),
           ),
           followUpAsked: followUpText,
           followUpReason,
+          clarity: first.clarity,
+          reasked,
         });
 
         if (!abortRef.current) {
@@ -841,7 +981,7 @@ export function useSession(deps: SessionDeps = defaultDeps) {
 
       if (!abortRef.current) await speak(closingOf(pair[0]), pair[0]);
     } finally {
-      finish();
+      void finish();
     }
   }, [finish, listenForAnswer, patch, setAvatars, speak]);
 
@@ -853,12 +993,17 @@ export function useSession(deps: SessionDeps = defaultDeps) {
 
   const reset = useCallback(() => {
     teardown();
+    void recorderRef.current.stop();
+    if (videoUrlRef.current) {
+      URL.revokeObjectURL(videoUrlRef.current);
+      videoUrlRef.current = null;
+    }
     visionRef.current.reset();
     abortRef.current = false;
     if (mountedRef.current) setState(initialState());
   }, [teardown]);
 
-  return { state, videoRef, prepare, runCalibration, start, abort, reset };
+  return { state, videoRef, prepare, runCalibration, start, abort, reset, onGuideMeasured };
 }
 
 /* ── 헬퍼 ─────────────────────────────────────────────────────── */

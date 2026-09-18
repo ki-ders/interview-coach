@@ -28,6 +28,8 @@ export interface LlmVerdict {
   handoff: boolean;
   /** 다음 질문 앞에 붙일 연결 문장 (방금 답변을 짚어 주는 한 마디). 없으면 빈 문자열 */
   bridge: string;
+  /** 받아쓰기가 앞뒤가 안 맞아 (음성 인식 오류로 보여) 다시 말해 달라고 해야 하면 true */
+  unclear: boolean;
 }
 
 export interface LlmSummary {
@@ -53,7 +55,8 @@ export const VERDICT_SHAPE = `{
   "note": "지원자에게 도움이 될 한 줄 평가 (한국어, 40자 이내)",
   "followUp": "이어서 던질 꼬리 질문 한 문장 (한국어 존댓말). 답변이 충분하면 빈 문자열",
   "handoff": true|false (꼬리 질문을 옆 면접관이 이어받는 게 자연스러우면 true),
-  "bridge": "다음 질문으로 넘어가기 전에 방금 답변을 짚어 주는 한 마디 (20자 이내, 예: '수요 예측 얘기 흥미롭게 들었습니다.'). 없으면 빈 문자열"
+  "bridge": "다음 질문으로 넘어가기 전에 방금 답변을 짚어 주는 한 마디 (20자 이내, 예: '수요 예측 얘기 흥미롭게 들었습니다.'). 없으면 빈 문자열",
+  "unclear": true|false (음성 인식 오류로 보일 만큼 앞뒤가 안 맞아 무슨 말인지 알 수 없으면 true. 내용이 부실한 것과는 다르다)
 }`;
 
 export function buildEvalPrompt(o: EvalOpts): { system: string; user: string } {
@@ -70,6 +73,7 @@ export function buildEvalPrompt(o: EvalOpts): { system: string; user: string } {
       : '- 답변이 충분하고 근거가 있으면 followUp 을 빈 문자열로 둔다. 짧거나 초점이 빗나갔거나 근거가 없으면 꼬리 질문을 한다.',
     '- handoff 는 옆 면접관의 성향이 그 질문에 더 어울릴 때만 true (예: 압박형이 근거를 캐묻기, 온화형이 긴장을 풀어주며 되묻기).',
     '- 지원자의 답변은 음성 인식 결과라 오탈자·띄어쓰기 오류가 있을 수 있다. 그 자체는 지적하지 않는다.',
+    '- 다만 오인식이 심해 문장이 이어지지 않고 무슨 말인지 알 수 없으면 unclear 를 true 로 두고 followUp 은 비운다 (시스템이 다시 말해 달라고 한다).',
     '- 반드시 아래 형태의 JSON 만 출력한다.',
     VERDICT_SHAPE,
   ].join('\n');
@@ -143,6 +147,7 @@ export function normalizeVerdict(raw: unknown): LlmVerdict | null {
     followUp: String(r.followUp ?? '').trim().slice(0, 200),
     handoff: r.handoff === true || r.handoff === 'true',
     bridge: String(r.bridge ?? '').trim().slice(0, 60),
+    unclear: r.unclear === true || r.unclear === 'true',
   };
 }
 

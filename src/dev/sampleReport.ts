@@ -107,6 +107,8 @@ export function makeSampleReport(): SessionReport {
       metrics: computeMetrics(derive(stats), emptyTextStats),
       followUpAsked: i === 2 ? '근거가 뭡니까? 구체적으로 말씀해 주세요.' : null,
       followUpReason: i === 2 ? '설명의 깊이 부족' : null,
+      clarity: 0.88,
+      reasked: false,
     });
     // 면접관이 말하는 구간 (음성 지표 제외)
     t += 4000;

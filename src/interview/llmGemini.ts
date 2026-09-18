@@ -29,8 +29,9 @@ const VERDICT_SCHEMA = {
     followUp: { type: 'STRING' },
     handoff: { type: 'BOOLEAN' },
     bridge: { type: 'STRING' },
+    unclear: { type: 'BOOLEAN' },
   },
-  required: ['relevance', 'note', 'followUp', 'handoff', 'bridge'],
+  required: ['relevance', 'note', 'followUp', 'handoff', 'bridge', 'unclear'],
 };
 
 const SUMMARY_SCHEMA = {

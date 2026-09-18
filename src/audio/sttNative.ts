@@ -133,6 +133,9 @@ export class NativeStt {
     this.emit();
   }
 
+  /** 네이티브 플러그인은 신뢰도를 주지 않는다 */
+  lastTurnConfidence: number | null = null;
+
   endTurn(): string {
     const text = `${this.finalText} ${this.interimText}`.trim();
     this.finalText = '';
@@ -145,6 +148,7 @@ export class NativeStt {
       final: this.finalText.trim(),
       interim: this.interimText.trim(),
       full: `${this.finalText} ${this.interimText}`.trim(),
+      confidence: null,
     };
   }
 }

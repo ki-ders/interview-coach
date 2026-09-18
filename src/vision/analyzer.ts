@@ -156,6 +156,11 @@ export interface VisionDebug {
 
 export class VisionAnalyzer {
   calibration: GazeCalibration = { ...DEFAULT_CALIBRATION };
+  /**
+   * 지금 바라봐야 할 지점 (보정 좌표: 0 = 정면/렌즈, 좌우 ±1 = 화면 가장자리, 아래 1 = 화면 아래).
+   * 시선 안내 모드에서는 면접관 얼굴로 옮겨 다니고, 고정 모드에서는 늘 렌즈다.
+   */
+  private target = { x: 0, y: 0 };
 
   private prevShoulderMid: { x: number; y: number } | null = null;
   private prevWrists: { lx: number; ly: number; rx: number; ry: number } | null = null;
@@ -194,6 +199,7 @@ export class VisionAnalyzer {
   };
 
   reset() {
+    this.target = { x: 0, y: 0 };
     this.prevShoulderMid = null;
     this.prevWrists = null;
     this.prevPoseT = 0;
@@ -215,6 +221,19 @@ export class VisionAnalyzer {
     this.debug.fps = this.fpsEma.get();
   }
 
+  /**
+   * 화면상의 위치(0~1, 왼쪽 위가 원점)를 바라볼 지점으로 삼는다.
+   * 보정에서 "화면 왼쪽 끝" 을 봤을 때의 부호로 좌우 방향을 맞춘다.
+   */
+  setTargetScreen(fx: number, fy: number) {
+    const leftSign = this.calibration.spanX < 0 ? -1 : 1;
+    this.target = { x: leftSign * (0.5 - fx) * 2, y: Math.max(0, fy) };
+  }
+
+  resetTarget() {
+    this.target = { x: 0, y: 0 };
+  }
+
   face(result: FaceLandmarkerResult | null): FaceSample | null {
     if (!result?.faceLandmarks?.length) return null;
     const raw = rawGaze(result);
@@ -233,10 +252,13 @@ export class VisionAnalyzer {
     this.debug.gazeX = gx;
     this.debug.gazeDown = gDown;
 
+    // 편차는 "지금 봐야 할 지점" 기준이다 — 안내 점을 잘 따라가면 0 근처에 머문다
+    const dx = gx - this.target.x;
+    const dy = gDown - this.target.y;
     return {
-      yawDev: gx,
-      pitchDev: -gDown,
-      onTarget: Math.abs(gx) < OFF_TARGET_X && Math.abs(gDown) < OFF_TARGET_Y,
+      yawDev: dx,
+      pitchDev: -dy,
+      onTarget: Math.abs(dx) < OFF_TARGET_X && Math.abs(dy) < OFF_TARGET_Y,
       lookingDown: gDown > LOOK_DOWN_Y,
       blink: isBlinking(result),
     };
