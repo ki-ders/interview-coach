@@ -209,6 +209,8 @@ export function useSession(deps: SessionDeps = defaultDeps) {
   const lastTickRef = useRef(0);
 
   const answeringRef = useRef(false);
+  /** 지금 답변 턴이 시작된 시각 — 답변 초반의 실시간 창은 직전 턴의 침묵이 섞여 있어 경고에 쓰지 않는다 */
+  const answerStartedAtRef = useRef(0);
   const lastUserVoiceRef = useRef(0);
   /** 인식기가 마지막으로 텍스트를 바꾼 시각 */
   const lastSttUpdateRef = useRef(0);
@@ -271,8 +273,10 @@ export function useSession(deps: SessionDeps = defaultDeps) {
       const keys: MetricKey[] = ['voice', 'calm', 'gaze', 'gesture', 'speech'];
       for (const k of keys) {
         if (k === 'voice' && !d.voiceAvailable) continue;
-        // 말투 경고는 답변 중, 그것도 한마디라도 한 뒤에만 (생각하는 몇 초를 "끊김"으로 몰지 않게)
-        if (k === 'speech' && (!answeringRef.current || !heardSpeechRef.current)) continue;
+        // 말투·발성 경고는 답변 중, 한마디라도 한 뒤, 그리고 답변이 8초는 이어진 뒤에만.
+        // (답변 초반의 12초 창에는 직전 턴의 침묵과 면접관 차례가 섞여 있어 "끊김"으로 오판한다)
+        const answeredMs = answeringRef.current ? now - answerStartedAtRef.current : 0;
+        if ((k === 'speech' || k === 'voice') && (!answeringRef.current || !heardSpeechRef.current || answeredMs < 8000)) continue;
         if ((k === 'gesture' || k === 'calm') && !d.poseAvailable) continue;
         if (metrics[k] < 45 && now - lastAlertAtRef.current[k] > ALERT_COOLDOWN_MS) {
           lastAlertAtRef.current[k] = now;
@@ -601,6 +605,7 @@ export function useSession(deps: SessionDeps = defaultDeps) {
       answeringRef.current = true;
 
       const start = performance.now();
+      answerStartedAtRef.current = start;
       let nudges = 0;
       let lastNudge = start;
       let lastShuffle = start;
