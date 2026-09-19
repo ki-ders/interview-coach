@@ -458,7 +458,7 @@ function summarize(specs: DetailSpec[], score: number, good: string, fallback: s
 
 /** 세부 지표별 만점 기준 — 리포트에 같이 보여줘 "무엇을 기준으로 채점했는지" 를 숨기지 않는다 */
 const TARGETS: Record<string, string> = {
-  '정면 응시 비율': '60~93%',
+  '기준점 응시 비율': '60~93%',
   '아래를 본 비율': '8% 이하',
   '시선 흔들림': '0.20 이하',
   '분당 눈 깜빡임': '8~26회',
@@ -494,13 +494,13 @@ export function buildBreakdown(d: DerivedStats, t: TextStats, m: LiveMetrics): M
   /* ── 시선 ── */
   const gaze: DetailSpec[] = [
     {
-      label: '정면 응시 비율',
+      label: '기준점 응시 비율',
       value: pct(d.onTargetRatio),
       score: bandScore(d.onTargetRatio, { ideal: [0.6, 0.93], zero: [0.3, 1.5] }),
       issue:
         d.onTargetRatio > 0.93
           ? '한 곳만 계속 응시해 다소 경직돼 보였습니다.'
-          : '카메라를 바라본 시간이 부족했습니다.',
+          : '기준점(면접관 눈 또는 렌즈)을 바라본 시간이 부족했습니다.',
     },
     {
       label: '아래를 본 비율',
@@ -528,7 +528,7 @@ export function buildBreakdown(d: DerivedStats, t: TextStats, m: LiveMetrics): M
     summary:
       d.faceCoverage < 0.5
         ? '얼굴이 화면에서 자주 벗어났습니다. 카메라 위치를 조정해 주세요.'
-        : summarize(gaze, m.gaze, '카메라를 안정적으로 바라봤습니다.', '시선 처리가 조금 불안정했습니다.'),
+        : summarize(gaze, m.gaze, '시선을 안정적으로 유지했습니다.', '시선 처리가 조금 불안정했습니다.'),
     details: toDetails(gaze),
     tips: gazeTips(d),
   });
@@ -733,7 +733,7 @@ function gazeTips(d: DerivedStats): string[] {
   const tips: string[] = [];
   if (d.faceCoverage < 0.6) tips.push('얼굴 전체가 화면 안에 들어오도록 카메라를 눈높이에 맞춰 주세요.');
   if (d.onTargetRatio < 0.5)
-    tips.push('답변할 때 카메라 렌즈를 보세요. 화면 속 자기 얼굴을 보면 시선이 아래로 내려갑니다.');
+    tips.push('답변할 때 질문한 면접관의 눈(화상 면접이면 렌즈)을 보세요. 화면 속 자기 얼굴을 보면 시선이 아래로 내려갑니다.');
   if (d.onTargetRatio > 0.96)
     tips.push('한 곳만 계속 응시하면 경직돼 보입니다. 문장이 바뀔 때 아주 살짝 시선을 옮겨 보세요.');
   if (d.downRatio > 0.2) tips.push('아래를 보는 시간이 깁니다. 메모를 볼 때도 3초 이상 넘기지 마세요.');

@@ -190,9 +190,16 @@ function LensMark({ onTarget, running, mode }: { onTarget: boolean | null; runni
           : '여기, 렌즈를 보세요';
   return (
     <div className={`lens lens--${tone}${running ? ' lens--running' : ''} lens--${mode}`} role="status" aria-live="polite">
-      <span className="lens__ring">
-        <span className="lens__dot" />
-      </span>
+      {mode === 'interviewer' ? (
+        <svg className="lens__eye" viewBox="0 0 24 24" width="22" height="22" aria-hidden>
+          <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12z" fill="none" stroke="currentColor" strokeWidth="2" />
+          <circle cx="12" cy="12" r="3" fill="currentColor" />
+        </svg>
+      ) : (
+        <span className="lens__ring">
+          <span className="lens__dot" />
+        </span>
+      )}
       <span className="lens__label">{label}</span>
     </div>
   );

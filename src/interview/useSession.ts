@@ -280,7 +280,9 @@ export function useSession(deps: SessionDeps = defaultDeps) {
           const text =
             k === 'speech' && d.voiceRatio < 0.3
               ? '침묵이 길어지고 있습니다. 결론부터 짧게 말해 보세요.'
-              : ALERT_TEXT[k];
+              : k === 'gaze' && configRef.current?.gazeGuide === 'interviewer'
+                ? '시선이 자꾸 다른 곳을 향합니다. 질문한 면접관의 눈을 보세요.'
+                : ALERT_TEXT[k];
           newAlert = { id: ++alertSeq.current, key: k, text, t };
           break;
         }
@@ -403,6 +405,7 @@ export function useSession(deps: SessionDeps = defaultDeps) {
       abortRef.current = false;
       // 버튼 탭의 사용자 제스처가 살아 있을 때 오디오 컨텍스트를 만들어 둔다 (iOS Safari)
       micRef.current.prime();
+      ttsRef.current.prime();
       patch({ phase: 'loading', error: null, loadingMessage: '카메라와 마이크 권한을 확인합니다…' });
 
       try {
@@ -421,6 +424,9 @@ export function useSession(deps: SessionDeps = defaultDeps) {
         await ttsRef.current.init();
         marksRef.current = await deps.loadLandmarkers((msg) => patch({ loadingMessage: msg }));
         llmRef.current = await deps.createLlm(config).catch(() => null);
+        // Gemini 키가 있고 자연 음성을 켜 두었으면 면접관이 Gemini 음성으로 말한다
+        ttsRef.current.useGemini(config.llmProvider === 'gemini' && config.naturalVoice ? config.apiKey : null);
+        ttsRef.current.onNotice = (msg) => patch({ notice: msg });
 
         const stt = sttRef.current;
         stt.onUpdate = (snap) => {
@@ -578,7 +584,7 @@ export function useSession(deps: SessionDeps = defaultDeps) {
   const listenForAnswer = useCallback(
     async (
       asker: Interviewer,
-    ): Promise<{ text: string; stats: RawStats; durationSec: number; latencySec: number; clarity: number | null }> => {
+    ): Promise<{ text: string; stats: RawStats; durationSec: number; latencySec: number; clarity: number | null; cutOff: boolean }> => {
       const cfg = configRef.current!;
       const stt = sttRef.current;
       const stats = emptyStats();
@@ -604,6 +610,8 @@ export function useSession(deps: SessionDeps = defaultDeps) {
       const otherId = cfg.interviewerIds.find((id) => id !== asker.id) ?? asker.id;
       let guideShiftAt = start + 8000 + Math.random() * 5000;
       let guideBackAt = 0;
+      /** 최대 답변 시간에 걸려 면접관이 끊었는지 */
+      let cutOff = false;
 
       while (!abortRef.current) {
         await sleep(200);
@@ -611,7 +619,10 @@ export function useSession(deps: SessionDeps = defaultDeps) {
         const elapsed = (now - start) / 1000;
         const sinceVoice = (now - lastUserVoiceRef.current) / 1000;
 
-        if (elapsed > cfg.maxAnswerSec) break;
+        if (elapsed > cfg.maxAnswerSec) {
+          cutOff = heardSpeechRef.current;
+          break;
+        }
 
         if (cfg.gazeGuide === 'interviewer' && otherId !== asker.id) {
           if (guideBackAt && now > guideBackAt) {
@@ -680,7 +691,11 @@ export function useSession(deps: SessionDeps = defaultDeps) {
       const latencySec = heardSpeechRef.current ? Math.max(0, (heardAtRef.current - start) / 1000) : durationSec;
       const text = stt.endTurn();
       guide(asker.id);
-      return { text, stats, durationSec, latencySec, clarity: stt.lastTurnConfidence };
+      if (cutOff) {
+        // 실제 면접처럼 시간이 다 되면 말을 끊는다
+        await speak(asker.mood === 'stern' ? '시간 관계상 여기까지 듣겠습니다.' : '네, 시간 관계상 여기까지 듣겠습니다. 감사합니다.', asker);
+      }
+      return { text, stats, durationSec, latencySec, clarity: stt.lastTurnConfidence, cutOff };
     },
     [guide, openMicSoon, patch, setAvatars, speak],
   );
@@ -798,6 +813,11 @@ export function useSession(deps: SessionDeps = defaultDeps) {
     mannerRef.current = [];
     echoNoticedRef.current = false;
 
+    // 첫 인사와 첫 질문은 미리 합성해 둔다
+    const greeting = greetingOf(a);
+    ttsRef.current.prefetch(greeting, a);
+    if (cfg.questions[0]) ttsRef.current.prefetch(cfg.questions[0].text, a);
+
     patch({
       phase: 'running',
       questionIndex: 0,
@@ -866,7 +886,7 @@ export function useSession(deps: SessionDeps = defaultDeps) {
     };
 
     try {
-      await speak(greetingOf(a), a);
+      await speak(greeting, a);
       if (!abortRef.current && b.id !== a.id) {
         await sleep(300);
         await speak(`저는 ${b.name}입니다. 함께 듣겠습니다.`, b);
@@ -885,6 +905,8 @@ export function useSession(deps: SessionDeps = defaultDeps) {
         const other = pair[(i + 1) % 2];
         patch({ questionIndex: i });
 
+        // 다음 질문은 지금 미리 합성해 두면 차례가 왔을 때 기다리지 않는다
+        if (cfg.questions[i + 1]) ttsRef.current.prefetch(cfg.questions[i + 1].text, pair[(i + 1) % 2]);
         await speak(bridge ? `${bridge} ${q.text}` : q.text, asker, true);
         bridge = '';
         if (abortRef.current) break;

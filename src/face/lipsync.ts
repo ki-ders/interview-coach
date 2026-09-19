@@ -35,13 +35,24 @@ export class LipSync {
   private pulses: Pulse[] = [];
   private active = false;
   private text = '';
+  /** 실제 음성 파형에서 뽑은 포락선 (Gemini 음성). 있으면 이걸로 입을 움직인다 */
+  private envelope: { data: Float32Array; stepMs: number; t0: number } | null = null;
 
   /** 문장 낭독 시작. 음절 수에 맞춰 리듬을 미리 깔아둔다. */
   begin(text: string, now = performance.now()) {
     this.text = text;
     this.active = true;
+    this.envelope = null;
     this.pulses = [];
     this.scheduleSpan(text, 0, text.length, now + 60);
+  }
+
+  /** 파형 포락선으로 시작 — 소리와 정확히 맞는다 */
+  beginEnvelope(data: Float32Array, stepMs: number, now = performance.now()) {
+    this.text = '';
+    this.active = true;
+    this.pulses = [];
+    this.envelope = { data, stepMs, t0: now };
   }
 
   /** 브라우저가 단어 경계를 알려줄 때. 그 단어의 음절들을 지금부터 다시 깐다. */
@@ -64,11 +75,22 @@ export class LipSync {
   end() {
     this.active = false;
     this.pulses = [];
+    this.envelope = null;
   }
 
   /** 0~1 턱 벌림 */
   value(now = performance.now()): number {
     if (!this.active) return 0;
+    if (this.envelope) {
+      const { data, stepMs, t0 } = this.envelope;
+      const x = (now - t0) / stepMs;
+      if (x < 0 || x >= data.length - 1) return 0;
+      const i = Math.floor(x);
+      const f = x - i;
+      // 포락선 0.15 이하는 다문 입, 그 위를 0~1 로 편다
+      const raw = data[i] * (1 - f) + data[i + 1] * f;
+      return Math.max(0, Math.min(1, (raw - 0.15) / 0.7));
+    }
     let v = 0;
     for (const p of this.pulses) {
       const u = (now - p.t0) / p.dur;

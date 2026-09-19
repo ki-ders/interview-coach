@@ -2326,3 +2326,12 @@ textarea.input {
   font-size: 13px;
   color: var(--text-dim);
 }
+
+.lens__eye {
+  display: block;
+}
+
+.lens--interviewer.lens--away .lens__eye {
+  animation: lens-pulse 1s ease-in-out infinite;
+  border-radius: 999px;
+}

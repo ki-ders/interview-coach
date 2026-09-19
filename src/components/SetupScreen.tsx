@@ -48,8 +48,9 @@ interface Prefs {
   gazeGuide: 'interviewer' | 'lens';
   blindMode: boolean;
   recordVideo: boolean;
+  naturalVoice: boolean;
 }
-const DEFAULT_PREFS: Prefs = { gazeGuide: 'interviewer', blindMode: false, recordVideo: true };
+const DEFAULT_PREFS: Prefs = { gazeGuide: 'interviewer', blindMode: false, recordVideo: true, naturalVoice: true };
 function loadPrefs(): Prefs {
   try {
     const raw = localStorage.getItem(PREF_STORE);
@@ -60,6 +61,7 @@ function loadPrefs(): Prefs {
       gazeGuide: parsed.gazeGuide === 'lens' || parsed.gazeGuide === 'fixed' ? 'lens' : 'interviewer',
       blindMode: parsed.blindMode === true,
       recordVideo: parsed.recordVideo !== false,
+      naturalVoice: parsed.naturalVoice !== false,
     };
   } catch {
     return DEFAULT_PREFS;
@@ -160,6 +162,7 @@ export function SetupScreen({ onStart }: Props) {
       gazeGuide: prefs.gazeGuide,
       blindMode: prefs.blindMode,
       recordVideo: prefs.recordVideo,
+      naturalVoice: prefs.naturalVoice,
     });
   };
 
@@ -444,6 +447,25 @@ export function SetupScreen({ onStart }: Props) {
               </span>
             )}
             <span className="tiny faint">키가 없거나 호출이 실패하면 규칙 기반으로 자동 전환됩니다.</span>
+          </div>
+        )}
+
+        {provider === 'gemini' && (
+          <div className="switch-row" style={{ marginTop: 10 }}>
+            <div className="switch-row__body">
+              <div className="switch-row__title">자연스러운 목소리 (Gemini 음성)</div>
+              <div className="muted tiny">
+                면접관이 기기 내장 음성 대신 Gemini 음성으로 말합니다. 남녀·성향별로 목소리가 다르고 훨씬 사람 같습니다.
+                무료 한도에 걸리거나 늦어지면 그 문장만 기기 음성으로 대신하고, 화면 위에 알려 드립니다.
+              </div>
+            </div>
+            <button
+              type="button"
+              className={`switch${prefs.naturalVoice ? ' switch--on' : ''}`}
+              onClick={() => setPref('naturalVoice', !prefs.naturalVoice)}
+              aria-pressed={prefs.naturalVoice}
+              aria-label="자연스러운 목소리"
+            />
           </div>
         )}
       </section>

@@ -1,5 +1,6 @@
 import type { Interviewer } from '../types';
 import { lipSync } from '../face/lipsync';
+import { GeminiTts } from './ttsGemini';
 
 let voicesCache: SpeechSynthesisVoice[] = [];
 
@@ -93,10 +94,122 @@ export class Tts {
   /** 지금 소리를 내고 있는가 (마이크 오인식 방지용) */
   speaking = false;
   enabled = true;
+  /** Gemini 자연 음성 (키가 있고 켜 두었을 때). 실패하면 기기 음성으로 */
+  private gemini: GeminiTts | null = null;
+  private ctx: AudioContext | null = null;
+  private playing: AudioBufferSourceNode | null = null;
+  /** Gemini 음성이 기기 음성으로 넘어갔을 때 한 번 알리기 위한 문구 */
+  onNotice: ((msg: string) => void) | null = null;
+  private noticed = false;
 
   async init() {
     voicesCache = await loadVoices();
     this.ready = true;
+  }
+
+  /** 사용자 제스처 안에서 오디오 컨텍스트를 만들어 둔다 (iOS Safari) */
+  prime() {
+    if (this.ctx) return;
+    const Ctor: typeof AudioContext =
+      window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    if (!Ctor) return;
+    this.ctx = new Ctor();
+    if (this.ctx.state === 'suspended') void this.ctx.resume().catch(() => undefined);
+  }
+
+  /** Gemini 음성을 켠다 (키가 비면 끈다) */
+  useGemini(apiKey: string | null) {
+    this.gemini = apiKey?.trim() ? new GeminiTts(apiKey) : null;
+    this.noticed = false;
+  }
+
+  get geminiVoiceOn() {
+    return this.gemini !== null;
+  }
+
+  /** 질문처럼 미리 아는 문장은 미리 합성해 두면 말할 때 기다리지 않는다 */
+  prefetch(text: string, who: Interviewer) {
+    if (!this.gemini || !this.ctx || !text.trim()) return;
+    this.gemini.prefetch(this.ctx, text, who);
+  }
+
+  /** Gemini 음성으로 말한다. 못 쓰면 null (호출부가 기기 음성으로) */
+  private speakGemini(text: string, who: Interviewer): SpeakHandle | null {
+    const gemini = this.gemini;
+    const ctx = this.ctx;
+    if (!gemini || !ctx || !gemini.available) return null;
+
+    let settle: () => void = () => {};
+    const done = new Promise<void>((resolve) => {
+      settle = resolve;
+    });
+    let settled = false;
+    let cancelled = false;
+    let timer = 0;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      this.playing = null;
+      this.speaking = false;
+      lipSync.end();
+      settle();
+    };
+    // 합성을 기다리는 동안도 "말하는 중" 으로 두어 마이크가 열리지 않게 한다
+    this.speaking = true;
+    // 합성이 너무 오래 걸리면(한도·지연) 포기하고 기기 음성으로
+    let gaveUp = false;
+    const giveUp = window.setTimeout(() => {
+      gaveUp = true;
+    }, 6000);
+
+    void gemini.synthesize(ctx, text, who).then(async (result) => {
+      window.clearTimeout(giveUp);
+      if (cancelled) return finish();
+      if (!result || gaveUp) {
+        // 기기 음성으로 대신 말하고 그 끝을 기다린다
+        if (!this.noticed && gemini.lastError) {
+          this.noticed = true;
+          this.onNotice?.(gemini.lastError);
+        }
+        const fallback = this.speakDevice(text, who);
+        fallbackHandle = fallback;
+        await fallback.done;
+        return finish();
+      }
+      if (ctx.state === 'suspended') await ctx.resume().catch(() => undefined);
+      const src = ctx.createBufferSource();
+      src.buffer = result.buffer;
+      src.connect(ctx.destination);
+      src.onended = finish;
+      this.playing = src;
+      lipSync.beginEnvelope(result.envelope, result.envelopeStepMs);
+      src.start();
+      timer = window.setTimeout(finish, result.buffer.duration * 1000 + 1500);
+    });
+
+    let fallbackHandle: SpeakHandle | null = null;
+    return {
+      done,
+      cancel: () => {
+        cancelled = true;
+        fallbackHandle?.cancel();
+        try {
+          this.playing?.stop();
+        } catch {
+          /* 이미 끝남 */
+        }
+        finish();
+      },
+    };
+  }
+
+  speak(text: string, who: Interviewer): SpeakHandle {
+    if (this.enabled && text.trim()) {
+      const g = this.speakGemini(text, who);
+      if (g) return g;
+    }
+    return this.speakDevice(text, who);
   }
 
   get available() {
@@ -107,7 +220,8 @@ export class Tts {
     return voicesCache.some((v) => v.lang?.toLowerCase().startsWith('ko'));
   }
 
-  speak(text: string, who: Interviewer): SpeakHandle {
+  /** 기기 내장 음성(Web Speech) */
+  private speakDevice(text: string, who: Interviewer): SpeakHandle {
     let settle: () => void = () => {};
     const done = new Promise<void>((resolve) => {
       settle = resolve;
@@ -178,6 +292,12 @@ export class Tts {
 
   stop() {
     if (this.available) speechSynthesis.cancel();
+    try {
+      this.playing?.stop();
+    } catch {
+      /* noop */
+    }
+    this.playing = null;
     this.speaking = false;
   }
 }

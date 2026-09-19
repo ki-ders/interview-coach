@@ -197,4 +197,6 @@ export interface SessionConfig {
   blindMode: boolean;
   /** 면접 영상을 녹화해 끝나고 파일로 준다 (기기 밖으로 나가지 않는다) */
   recordVideo: boolean;
+  /** Gemini 음성으로 면접관이 말한다 (Gemini 키가 있을 때만 의미 있음). 실패하면 기기 음성 */
+  naturalVoice: boolean;
 }

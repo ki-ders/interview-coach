@@ -249,6 +249,11 @@ export function InterviewScreen({
             style={{ textAlign: 'left', maxWidth: 440, lineHeight: 1.9, paddingLeft: 20 }}
           >
             <li>상체가 화면에 다 들어오게 앉으세요 (다리까지 보이면 떨림 감지가 더 정확합니다).</li>
+            <li>
+              {guideMode === 'interviewer'
+                ? '답변할 때는 질문한 면접관의 눈(파란 점)을 보세요. 점이 옆 면접관으로 옮겨 가면 자연스럽게 따라가세요.'
+                : '답변할 때는 카메라 렌즈(위쪽 가운데 표시)를 보세요.'}
+            </li>
             <li>면접관이 질문을 마치면 바로 답변하세요.</li>
             <li>말을 멈추면 {'약 2~3초'} 뒤 다음 질문으로 넘어갑니다.</li>
             <li>

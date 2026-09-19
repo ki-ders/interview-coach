@@ -33,6 +33,7 @@ const baseConfig = (questions: SessionConfig['questions'], over: Partial<Session
   gazeGuide: 'interviewer',
   blindMode: false,
   recordVideo: true,
+  naturalVoice: false,
   ...over,
 });
 

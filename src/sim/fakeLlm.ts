@@ -34,7 +34,7 @@ export class FakeLlm implements InterviewerLlm {
         followUp: '',
         handoff: false,
         bridge: '수요 예측 얘기 흥미롭게 들었습니다.',
-        gist: '',
+        gist: '데이터 분석 전공, 팀 5명을 이끌어 수요 예측 모델로 오차 18% 감소',
         flags: [],
       };
       this.log(`가짜 LLM: 평가 ${v.relevance}, 연결문장 있음`);

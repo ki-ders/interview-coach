@@ -63,7 +63,8 @@ export function SimDriver({ state, world, scenario, log, bus, onBegin, onStart }
   useEffect(() => {
     (window as unknown as { __simReport?: unknown }).__simReport = state.report;
     (window as unknown as { __simState?: unknown }).__simState = state;
-  }, [state]);
+    (window as unknown as { __simLog?: unknown }).__simLog = log;
+  }, [state, log]);
 
   const switchScenario = (id: string) => {
     const url = new URL(location.href);
