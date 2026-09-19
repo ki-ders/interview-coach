@@ -135,6 +135,7 @@ export class NativeStt {
 
   /** 네이티브 플러그인은 신뢰도를 주지 않는다 */
   lastTurnConfidence: number | null = null;
+  echoCount = 0;
 
   endTurn(): string {
     const text = `${this.finalText} ${this.interimText}`.trim();

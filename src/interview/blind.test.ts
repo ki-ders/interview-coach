@@ -8,12 +8,21 @@ describe('블라인드 면접 위반 감지', () => {
     expect(cats('안녕하세요 저는 김민수입니다 지원 동기는')).toContain('name');
     expect(cats('제 이름은 박서연이고 컴퓨터를 좋아합니다')).toContain('name');
     expect(cats('이지훈이라고 합니다')).toContain('name');
+    // 음성 인식이 띄어 적거나, 첫머리에 바로 이름을 말하는 경우
+    expect(cats('저는 김 민수 입니다')).toContain('name');
+    expect(cats('안녕하세요 박서연입니다 지원 동기는')).toContain('name');
+    expect(cats('전 최유진이에요')).toContain('name');
+    expect(cats('지원자 정우성입니다')).toContain('name');
+    expect(cats('이름을 말씀드리면 김민수라고 합니다')).toContain('name');
   });
 
   it('성씨로 시작하는 보통 낱말은 이름으로 보지 않는다', () => {
     expect(cats('저는 지원자입니다')).not.toContain('name');
     expect(cats('저는 성실한 사람입니다')).not.toContain('name');
     expect(cats('저는 한국인이고 개발자입니다')).not.toContain('name');
+    expect(cats('저는 공무원입니다')).not.toContain('name');
+    expect(cats('저는 신입입니다')).not.toContain('name');
+    expect(cats('안녕하세요 반갑습니다')).not.toContain('name');
   });
 
   it('학교 이름을 잡되 일반 명사는 넘긴다', () => {

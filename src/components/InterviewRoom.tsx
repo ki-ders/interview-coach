@@ -12,8 +12,10 @@ interface Props {
   /** 사용자가 지금 카메라를 보고 있는지 (null = 얼굴 없음) */
   gazeOnTarget: boolean | null;
   running: boolean;
-  /** 시선 안내 모드에서 지금 바라볼 곳. 고정 모드면 null */
+  /** 지금 바라볼 곳(면접관 id). 렌즈 모드면 null */
   guideTarget?: 'lens' | string | null;
+  /** 시선 기준: 면접관 눈(interviewer) / 카메라 렌즈(lens) */
+  guideMode?: 'interviewer' | 'lens';
   /** 안내 점의 화면상 위치(0~1)를 알려준다 */
   onGuideMeasured?: (fx: number, fy: number) => void;
 }
@@ -30,7 +32,7 @@ const STATE_LABEL: Record<AvatarState, string> = {
  * 면접실 한 공간. CSS 3D 로 벽·바닥·긴 책상을 깔고, 그 뒤에 두 면접관(2.5D 사진)을
  * 사용자 쪽으로 살짝 돌려 앉힌다. 위쪽 가운데에는 "여기를 보세요" 렌즈 표시가 항상 떠 있다.
  */
-export function InterviewRoom({ pair, states, speakingId, gazeOnTarget, running, guideTarget, onGuideMeasured }: Props) {
+export function InterviewRoom({ pair, states, speakingId, gazeOnTarget, running, guideTarget, guideMode = 'lens', onGuideMeasured }: Props) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const backdrop = useBackdrop();
   return (
@@ -72,7 +74,7 @@ export function InterviewRoom({ pair, states, speakingId, gazeOnTarget, running,
         ))}
       </div>
 
-      <LensMark onTarget={gazeOnTarget} running={running} />
+      <LensMark onTarget={gazeOnTarget} running={running} mode={guideMode} />
       {guideTarget && <GuideDot rootRef={rootRef} target={guideTarget} onMeasured={onGuideMeasured} />}
     </div>
   );
@@ -125,9 +127,10 @@ function GuideDot({
     } else {
       const seat = root.querySelector<HTMLElement>(`[data-seat="${target}"] .seat__card`);
       const r = seat?.getBoundingClientRect();
-      // 눈높이: 사진은 얼굴 중심(44%)보다 조금 위, 벡터 얼굴은 32% 근처 — 그 사이
+      // 눈높이: 사진은 얼굴 중심(44%)보다 조금 위(37%), 벡터 얼굴은 30% 근처
+      const isPhoto = !!seat?.querySelector('.photoface[data-status="ready"]');
       x = r ? r.left + r.width / 2 : rootRect.left + rootRect.width / 2;
-      y = r ? r.top + r.height * 0.35 : rootRect.top + rootRect.height * 0.34;
+      y = r ? r.top + r.height * (isPhoto ? 0.37 : 0.3) : rootRect.top + rootRect.height * 0.34;
     }
     setPos({ left: x - rootRect.left, top: y - rootRect.top });
     // 렌즈는 카메라 그 자체이므로 (0,0) 기준을 쓰고, 면접관은 화면상 위치로 환산한다
@@ -170,13 +173,23 @@ function Seat({
   );
 }
 
-/** 카메라 렌즈가 있는 위쪽 가운데 — 사용자가 항상 바라볼 지점 */
-function LensMark({ onTarget, running }: { onTarget: boolean | null; running: boolean }) {
+/** 위쪽 가운데 시선 상태 표시. 렌즈 모드에서는 이 자리가 곧 바라볼 지점(카메라)이다 */
+function LensMark({ onTarget, running, mode }: { onTarget: boolean | null; running: boolean; mode: 'interviewer' | 'lens' }) {
   const tone = onTarget === null ? 'off' : onTarget ? 'on' : 'away';
   const label =
-    onTarget === null ? '카메라 렌즈를 보세요' : onTarget ? '시선 좋습니다' : '여기, 렌즈를 보세요';
+    mode === 'interviewer'
+      ? onTarget === null
+        ? '면접관의 눈을 보세요'
+        : onTarget
+          ? '시선 좋습니다'
+          : '면접관의 눈을 보세요'
+      : onTarget === null
+        ? '카메라 렌즈를 보세요'
+        : onTarget
+          ? '시선 좋습니다'
+          : '여기, 렌즈를 보세요';
   return (
-    <div className={`lens lens--${tone}${running ? ' lens--running' : ''}`} role="status" aria-live="polite">
+    <div className={`lens lens--${tone}${running ? ' lens--running' : ''} lens--${mode}`} role="status" aria-live="polite">
       <span className="lens__ring">
         <span className="lens__dot" />
       </span>

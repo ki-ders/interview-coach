@@ -56,7 +56,8 @@ export class ClaudeLlm implements InterviewerLlm {
         followUp: z.string().describe('이어서 던질 꼬리 질문 한 문장 (한국어 존댓말). 불필요하면 빈 문자열'),
         handoff: z.boolean().describe('옆 면접관이 꼬리 질문을 이어받는 게 자연스러우면 true'),
         bridge: z.string().describe('다음 질문 앞에 붙일, 방금 답변을 짚는 한 마디 (20자 이내). 없으면 빈 문자열'),
-        unclear: z.boolean().describe('음성 인식 오류로 보일 만큼 앞뒤가 안 맞아 무슨 말인지 알 수 없으면 true'),
+        gist: z.string().describe('오인식을 감안해 면접관이 이해한 답변 요지 한 문장 (60자 이내)'),
+        flags: z.array(z.enum(['name', 'school', 'family', 'award', 'examNo', 'banmal', 'profanity'])).describe('답변에서 발견한 문제: 성명/학교/가족/수상/수험번호 언급, 반말, 비속어'),
       });
       const { system, user } = buildEvalPrompt(opts);
       const response = await client.messages.parse({

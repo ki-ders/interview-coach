@@ -3,7 +3,36 @@ import { lipSync } from '../face/lipsync';
 
 let voicesCache: SpeechSynthesisVoice[] = [];
 
-function loadVoices(): Promise<SpeechSynthesisVoice[]> {
+/** 사용자가 면접관마다 고른 음성 (voiceURI). 기기마다 다르므로 이 브라우저에만 저장한다 */
+const VOICE_STORE = 'interview-coach:voices';
+
+export function getVoiceOverrides(): Record<string, string> {
+  try {
+    return JSON.parse(localStorage.getItem(VOICE_STORE) ?? '{}') as Record<string, string>;
+  } catch {
+    return {};
+  }
+}
+
+export function setVoiceOverride(interviewerId: string, voiceURI: string | null) {
+  const all = getVoiceOverrides();
+  if (voiceURI) all[interviewerId] = voiceURI;
+  else delete all[interviewerId];
+  try {
+    localStorage.setItem(VOICE_STORE, JSON.stringify(all));
+  } catch {
+    /* noop */
+  }
+}
+
+/** 기기에 있는 한국어 음성 목록 (아직 로드 전이면 빈 배열일 수 있다) */
+export function koreanVoices(): SpeechSynthesisVoice[] {
+  if (typeof speechSynthesis === 'undefined') return [];
+  const all = voicesCache.length ? voicesCache : speechSynthesis.getVoices();
+  return all.filter((v) => v.lang?.toLowerCase().replace('_', '-').startsWith('ko'));
+}
+
+export function loadVoices(): Promise<SpeechSynthesisVoice[]> {
   return new Promise((resolve) => {
     if (typeof speechSynthesis === 'undefined') return resolve([]);
     const now = speechSynthesis.getVoices();
@@ -115,7 +144,9 @@ export class Tts {
     utter.rate = who.voice.rate;
     utter.volume = 1;
     if (this.ready) {
-      const pick = pickVoice(voicesCache, who.voice.preferFemale);
+      const chosen = getVoiceOverrides()[who.id];
+      const forced = chosen ? voicesCache.find((v) => v.voiceURI === chosen) : undefined;
+      const pick = forced ? { voice: forced, genderMatched: true } : pickVoice(voicesCache, who.voice.preferFemale);
       if (pick.voice) utter.voice = pick.voice;
       // 기기에 한 성별 음성밖에 없으면(아이패드는 대개 여성 음성 하나) 음높이 차이를 더 벌려 구분되게 한다
       if (!pick.genderMatched) utter.pitch = who.voice.preferFemale ? who.voice.pitch + 0.05 : Math.max(0.55, who.voice.pitch - 0.18);

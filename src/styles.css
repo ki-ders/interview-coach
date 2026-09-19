@@ -2279,3 +2279,50 @@ textarea.input {
     padding: 4px;
   }
 }
+
+.banner--info {
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+  display: block;
+}
+
+.voicepick select.input {
+  padding: 8px 10px;
+  font-size: 13.5px;
+}
+
+.alert--manner {
+  border-color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 14%, var(--surface));
+  color: color-mix(in srgb, var(--warn) 70%, var(--text));
+  font-weight: 700;
+}
+
+.manner-box {
+  border: 1px solid var(--warn);
+  background: color-mix(in srgb, var(--warn) 8%, var(--surface));
+  border-radius: var(--radius);
+  padding: 14px 16px;
+}
+
+.manner-box h3 {
+  color: color-mix(in srgb, var(--warn) 70%, var(--text));
+  font-size: 15px;
+  margin-bottom: 8px;
+}
+
+.metric__row .metric__target {
+  color: var(--text-faint);
+  font-size: 11px;
+  margin-left: 6px;
+}
+
+.gist {
+  margin: 4px 0 0;
+  padding: 6px 10px;
+  border-left: 3px solid var(--accent);
+  background: var(--accent-soft);
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--text-dim);
+}

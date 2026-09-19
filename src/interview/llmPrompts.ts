@@ -15,7 +15,13 @@ export interface EvalOpts {
   nextQuestion?: string;
   /** 이번 문항에서 이미 꼬리질문을 했는지 */
   alreadyFollowedUp: boolean;
+  /** 블라인드 면접이면 성명·학교·가족·수상·수험번호 언급도 잡아 달라고 한다 */
+  blindMode?: boolean;
 }
+
+/** LLM 이 답변에서 잡아낸 규정·말씨 문제 */
+export type LlmFlag = 'name' | 'school' | 'family' | 'award' | 'examNo' | 'banmal' | 'profanity';
+export const LLM_FLAGS: LlmFlag[] = ['name', 'school', 'family', 'award', 'examNo', 'banmal', 'profanity'];
 
 export interface LlmVerdict {
   /** 0~100, 질문과 답변이 얼마나 맞물렸는지 */
@@ -28,8 +34,10 @@ export interface LlmVerdict {
   handoff: boolean;
   /** 다음 질문 앞에 붙일 연결 문장 (방금 답변을 짚어 주는 한 마디). 없으면 빈 문자열 */
   bridge: string;
-  /** 받아쓰기가 앞뒤가 안 맞아 (음성 인식 오류로 보여) 다시 말해 달라고 해야 하면 true */
-  unclear: boolean;
+  /** 오인식을 감안해 면접관이 이해한 답변 요지 (한 문장). 리포트에 "면접관이 이해한 내용" 으로 보여준다 */
+  gist: string;
+  /** 블라인드 규정 위반·반말·비속어 */
+  flags: LlmFlag[];
 }
 
 export interface LlmSummary {
@@ -56,7 +64,8 @@ export const VERDICT_SHAPE = `{
   "followUp": "이어서 던질 꼬리 질문 한 문장 (한국어 존댓말). 답변이 충분하면 빈 문자열",
   "handoff": true|false (꼬리 질문을 옆 면접관이 이어받는 게 자연스러우면 true),
   "bridge": "다음 질문으로 넘어가기 전에 방금 답변을 짚어 주는 한 마디 (20자 이내, 예: '수요 예측 얘기 흥미롭게 들었습니다.'). 없으면 빈 문자열",
-  "unclear": true|false (음성 인식 오류로 보일 만큼 앞뒤가 안 맞아 무슨 말인지 알 수 없으면 true. 내용이 부실한 것과는 다르다)
+  "gist": "오인식을 감안해 면접관이 이해한 답변의 요지 한 문장 (한국어, 60자 이내)",
+  "flags": ["답변에서 발견한 문제만 골라 나열: name(본인 성명 밝힘), school(출신 학교명), family(가족·친인척 언급), award(수상 실적), examNo(수험번호), banmal(반말·해라체로 답함), profanity(비속어·욕설). 없으면 빈 배열"]
 }`;
 
 export function buildEvalPrompt(o: EvalOpts): { system: string; user: string } {
@@ -72,8 +81,13 @@ export function buildEvalPrompt(o: EvalOpts): { system: string; user: string } {
       ? '- 이번 문항에서 이미 꼬리 질문을 했으므로 followUp 은 빈 문자열로 둔다.'
       : '- 답변이 충분하고 근거가 있으면 followUp 을 빈 문자열로 둔다. 짧거나 초점이 빗나갔거나 근거가 없으면 꼬리 질문을 한다.',
     '- handoff 는 옆 면접관의 성향이 그 질문에 더 어울릴 때만 true (예: 압박형이 근거를 캐묻기, 온화형이 긴장을 풀어주며 되묻기).',
-    '- 지원자의 답변은 음성 인식 결과라 오탈자·띄어쓰기 오류가 있을 수 있다. 그 자체는 지적하지 않는다.',
-    '- 다만 오인식이 심해 문장이 이어지지 않고 무슨 말인지 알 수 없으면 unclear 를 true 로 두고 followUp 은 비운다 (시스템이 다시 말해 달라고 한다).',
+    '- 지원자의 답변은 음성 인식 결과라 오탈자·띄어쓰기·동음이의어 오류가 20% 안팎 섞여 있다. 그 자체는 지적하지 말고, 앞뒤 문맥으로 지원자가 하려던 말을 최대한 복원해서(예: "수료 예측" → "수요 예측") 평가하고 꼬리 질문도 그 복원한 내용을 바탕으로 만든다. 못 알아들었다고 되묻지 않는다.',
+    '- 칭찬은 근거가 있을 때만 한다. 실제 면접관처럼 답변의 허점(근거 없음, 두루뭉술함, 질문 회피, 과장)을 반드시 하나는 짚는다. 전부 좋다고 하지 않는다.',
+    '- note 는 지원자가 다음에 무엇을 고쳐야 할지 알 수 있게 구체적으로 쓴다 ("좋았습니다" 같은 빈말 금지).',
+    o.blindMode
+      ? '- 블라인드 면접이다. 답변에 본인 성명, 출신 학교명(대학·고교), 가족·친인척, 수상 실적, 수험번호가 나오면 flags 에 해당 항목을 넣는다. 오인식으로 이름처럼 들리는 낱말은 넣지 않는다.'
+      : '- flags 의 name/school/family/award/examNo 는 이번 면접에서는 쓰지 않는다 (빈 배열 또는 banmal/profanity 만).',
+    '- 답변이 존댓말이 아니라 반말·해라체("했어", "그거야", "한다")로 되어 있으면 flags 에 banmal, 비속어·욕설이 있으면 profanity 를 넣는다.',
     '- 반드시 아래 형태의 JSON 만 출력한다.',
     VERDICT_SHAPE,
   ].join('\n');
@@ -104,7 +118,8 @@ export function buildSummaryPrompt(answers: AnswerRecord[], interviewers: Interv
     '당신은 한국어 모의 면접의 면접관입니다. 면접이 끝났고, 지원자에게 답변 내용에 대한 총평을 씁니다.',
     `면접관: ${interviewers.map(personaOf).join(' / ')}`,
     '시선·자세·목소리 같은 비언어 요소는 다른 시스템이 채점하므로 언급하지 말고, 답변의 내용·구조·근거·질문과의 부합만 평가합니다.',
-    '답변은 음성 인식 결과라 오탈자가 있을 수 있습니다. 오탈자는 지적하지 않습니다.',
+    '답변은 음성 인식 결과라 오탈자가 있을 수 있습니다. 오탈자는 지적하지 않고 문맥으로 뜻을 복원해 평가합니다.',
+    '실제 면접관처럼 솔직하게 씁니다. 근거 없는 칭찬은 하지 않고, 실전이었다면 어떤 대목에서 감점됐을지 구체적으로 짚습니다.',
     '반드시 아래 형태의 JSON 만 출력합니다.',
     SUMMARY_SHAPE,
   ].join('\n');
@@ -147,7 +162,10 @@ export function normalizeVerdict(raw: unknown): LlmVerdict | null {
     followUp: String(r.followUp ?? '').trim().slice(0, 200),
     handoff: r.handoff === true || r.handoff === 'true',
     bridge: String(r.bridge ?? '').trim().slice(0, 60),
-    unclear: r.unclear === true || r.unclear === 'true',
+    gist: String(r.gist ?? '').trim().slice(0, 120),
+    flags: Array.isArray(r.flags)
+      ? (r.flags.map((f) => String(f).trim()).filter((f): f is LlmFlag => (LLM_FLAGS as string[]).includes(f)))
+      : [],
   };
 }
 

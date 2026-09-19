@@ -456,8 +456,37 @@ function summarize(specs: DetailSpec[], score: number, good: string, fallback: s
   return score >= 78 ? good : fallback;
 }
 
+/** 세부 지표별 만점 기준 — 리포트에 같이 보여줘 "무엇을 기준으로 채점했는지" 를 숨기지 않는다 */
+const TARGETS: Record<string, string> = {
+  '정면 응시 비율': '60~93%',
+  '아래를 본 비율': '8% 이하',
+  '시선 흔들림': '0.20 이하',
+  '분당 눈 깜빡임': '8~26회',
+  '어깨 기울기': '3° 이하',
+  '상체 자세': '양호',
+  '몸 흔들림': '적당',
+  '손동작': '적당',
+  '얼굴·머리 만지기': '3% 이하',
+  '긴 침묵 (분당)': '1.2회 이하',
+  '짧은 멈춤 (분당)': '6회 이하',
+  '실제 발화 비율': '55~92%',
+  '답변 시작까지': '3초 이내',
+  '말 속도': '3.8~6.2',
+  '간투사 비율': '3% 이하',
+  '더듬은 횟수 (100어절당)': '1회 이하',
+  '문장 마무리': '85% 이상',
+  '또박또박함 (인식 신뢰도)': '92% 이상',
+  '평균 성량 (소음 대비)': '+24 dB 이상',
+  '작게 말한 비율': '12% 이하',
+  '성량 기복': '6 dB 이하',
+  '말끝 흐림': '2.5 dB 이하',
+  '다리 떨림 시간': '4% 이하',
+  '다리 떨림 강도': '0.10 이하',
+  '손 만지작거림': '0.12 이하',
+};
+
 const toDetails = (specs: DetailSpec[]): MetricBreakdown['details'] =>
-  specs.map((s) => ({ label: s.label, value: s.value, verdict: v(s.score) }));
+  specs.map((s) => ({ label: s.label, value: s.value, verdict: v(s.score), target: TARGETS[s.label] }));
 
 export function buildBreakdown(d: DerivedStats, t: TextStats, m: LiveMetrics): MetricBreakdown[] {
   const out: MetricBreakdown[] = [];

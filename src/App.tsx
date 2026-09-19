@@ -138,6 +138,7 @@ export default function App({ sim }: { sim?: SimSetup }) {
           onReset={backToSetup}
           showDebug={showDebug}
           onGuideMeasured={onGuideMeasured}
+          guideMode={config?.gazeGuide ?? 'lens'}
         />
       )}
 

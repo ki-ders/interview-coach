@@ -87,6 +87,8 @@ export class Stt {
   private confN = 0;
   /** 직전 endTurn() 이 돌려준 답변의 평균 신뢰도 */
   lastTurnConfidence: number | null = null;
+  /** 면접관 TTS 가 마이크로 되돌아와 버린 결과 수 (스피커 사용 감지) */
+  echoCount = 0;
   /** true 인 동안 들어온 결과는 버린다 (면접관 TTS 음성 차단) */
   gated = false;
   /** 직전에 면접관이 말한 문장. 이와 비슷한 인식 결과는 스피커 에코로 보고 버린다 */
@@ -127,7 +129,10 @@ export class Stt {
         const text = (res[0]?.transcript ?? '').trim();
         if (!text) continue;
         if (res.isFinal) {
-          if (looksLikeEcho(text, this.ignoreText)) continue;
+          if (looksLikeEcho(text, this.ignoreText)) {
+            this.echoCount++;
+            continue;
+          }
           this.finalText += (this.finalText ? ' ' : '') + text;
           // 일부 브라우저는 신뢰도를 항상 0 으로 준다 — 그건 모름으로 취급한다
           const conf = res[0]?.confidence ?? 0;
@@ -251,4 +256,5 @@ export type SttEngine = Pick<
   | 'endTurn'
   | 'snapshot'
   | 'lastTurnConfidence'
+  | 'echoCount'
 >;

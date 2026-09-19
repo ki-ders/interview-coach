@@ -16,6 +16,8 @@ interface Props {
   showDebug: boolean;
   /** 시선 안내 점이 화면 어디에 있는지 (0~1) — 분석기의 기준점을 옮기는 데 쓴다 */
   onGuideMeasured?: (fx: number, fy: number) => void;
+  /** 시선 기준 (설정값) */
+  guideMode?: 'interviewer' | 'lens';
 }
 
 const ORDER: MetricKey[] = ['gaze', 'gesture', 'speech', 'voice', 'calm'];
@@ -61,6 +63,7 @@ export function InterviewScreen({
   onReset,
   showDebug,
   onGuideMeasured,
+  guideMode = 'lens',
 }: Props) {
   const [a, b] = interviewerIds.map(getInterviewer);
   const running = state.phase === 'running';
@@ -100,6 +103,7 @@ export function InterviewScreen({
               gazeOnTarget={state.gazeOnTarget}
               running={running}
               guideTarget={state.gazeGuideTarget}
+              guideMode={guideMode}
               onGuideMeasured={onGuideMeasured}
             />
 
@@ -126,7 +130,9 @@ export function InterviewScreen({
           <div className="row" style={{ justifyContent: 'space-between' }}>
             <span className="tiny faint">
               {running
-                ? '면접관이 듣고 있습니다. 카메라 렌즈를 보며 말해 보세요.'
+                ? guideMode === 'interviewer'
+                  ? '면접관이 듣고 있습니다. 질문한 면접관의 눈을 보며 말해 보세요.'
+                  : '면접관이 듣고 있습니다. 카메라 렌즈를 보며 말해 보세요.'
                 : '카메라는 이 기기 밖으로 나가지 않습니다.'}
             </span>
             {running ? (
@@ -167,7 +173,7 @@ export function InterviewScreen({
           {state.alerts.length > 0 && (
             <div className="alerts">
               {state.alerts.slice(-2).map((al) => (
-                <div className={`alert${al.key === 'blind' ? ' alert--blind' : ''}`} key={al.id}>
+                <div className={`alert${al.key === 'blind' ? ' alert--blind' : al.key === 'manner' ? ' alert--manner' : ''}`} key={al.id}>
                   <span aria-hidden>⚠</span>
                   <span>{al.text}</span>
                 </div>
@@ -245,7 +251,9 @@ export function InterviewScreen({
             <li>상체가 화면에 다 들어오게 앉으세요 (다리까지 보이면 떨림 감지가 더 정확합니다).</li>
             <li>면접관이 질문을 마치면 바로 답변하세요.</li>
             <li>말을 멈추면 {'약 2~3초'} 뒤 다음 질문으로 넘어갑니다.</li>
-            <li>스피커 대신 이어폰을 쓰면 음성 인식 정확도가 올라갑니다.</li>
+            <li>
+              <b style={{ color: 'var(--accent)' }}>이어폰을 쓰세요.</b> 스피커면 면접관 목소리가 마이크로 되돌아와 받아쓰기에 섞입니다.
+            </li>
           </ul>
           <div className="row">
             <button type="button" className="btn btn--ghost" onClick={onBeginCalibration}>

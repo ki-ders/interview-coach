@@ -13,6 +13,7 @@ import {
 } from '../interview/llm';
 import { PhotoGuide } from './PhotoGuide';
 import { BackdropPicker } from './BackdropPicker';
+import { VoicePicker } from './VoicePicker';
 
 interface Props {
   onStart: (config: SessionConfig) => void;
@@ -44,18 +45,19 @@ const PROVIDERS: LlmProvider[] = ['none', 'gemini', 'claude'];
 /** 진행 방식 선택 — 다음에 열어도 그대로 */
 const PREF_STORE = 'interview-coach:prefs';
 interface Prefs {
-  gazeGuide: 'fixed' | 'guided';
+  gazeGuide: 'interviewer' | 'lens';
   blindMode: boolean;
   recordVideo: boolean;
 }
-const DEFAULT_PREFS: Prefs = { gazeGuide: 'fixed', blindMode: false, recordVideo: true };
+const DEFAULT_PREFS: Prefs = { gazeGuide: 'interviewer', blindMode: false, recordVideo: true };
 function loadPrefs(): Prefs {
   try {
     const raw = localStorage.getItem(PREF_STORE);
     if (!raw) return DEFAULT_PREFS;
-    const parsed = JSON.parse(raw) as Partial<Prefs>;
+    const parsed = JSON.parse(raw) as Omit<Partial<Prefs>, 'gazeGuide'> & { gazeGuide?: string };
     return {
-      gazeGuide: parsed.gazeGuide === 'guided' ? 'guided' : 'fixed',
+      // 예전 값(fixed/guided)은 렌즈/면접관으로 옮긴다
+      gazeGuide: parsed.gazeGuide === 'lens' || parsed.gazeGuide === 'fixed' ? 'lens' : 'interviewer',
       blindMode: parsed.blindMode === true,
       recordVideo: parsed.recordVideo !== false,
     };
@@ -190,6 +192,8 @@ export function SetupScreen({ onStart }: Props) {
           등장 인물은 모두 가상이며 실존 인물과 관계가 없습니다. 사진을 넣을 때도 실존 인물 사진은 쓰지 마세요.
         </p>
         <hr className="hr" />
+        <VoicePicker picked={picked} />
+        <hr className="hr" />
         <BackdropPicker />
       </section>
 
@@ -312,26 +316,26 @@ export function SetupScreen({ onStart }: Props) {
 
         <div className="switch-row">
           <div className="switch-row__body">
-            <div className="switch-row__title">시선 안내 점</div>
+            <div className="switch-row__title">시선 기준</div>
             <div className="muted tiny">
-              {prefs.gazeGuide === 'guided'
-                ? '점이 렌즈와 면접관 얼굴 사이를 오갑니다. 점을 따라 자연스럽게 시선을 옮기는 연습이 되고, 점을 잘 따라갈수록 시선 점수가 오릅니다.'
-                : '렌즈 표시 한 점만 보여 줍니다. 카메라를 꾸준히 보는 연습에 맞습니다.'}
+              {prefs.gazeGuide === 'interviewer'
+                ? '질문한 면접관의 눈을 보는 것이 좋은 시선입니다. 점이 그 면접관 눈 위에 있고, 가끔 옆 면접관으로 옮겨 가니 자연스럽게 따라가세요. 실제 대면 면접 연습에 맞습니다.'
+                : '카메라 렌즈를 보는 것이 좋은 시선입니다. 화상 면접(줌·웹캠) 연습에 맞습니다.'}
             </div>
             <div className="row" style={{ marginTop: 8, gap: 6 }}>
               <button
                 type="button"
-                className={`pack${prefs.gazeGuide === 'fixed' ? ' pack--on' : ''}`}
-                onClick={() => setPref('gazeGuide', 'fixed')}
+                className={`pack${prefs.gazeGuide === 'interviewer' ? ' pack--on' : ''}`}
+                onClick={() => setPref('gazeGuide', 'interviewer')}
               >
-                고정 (렌즈)
+                면접관 눈 (대면 면접)
               </button>
               <button
                 type="button"
-                className={`pack${prefs.gazeGuide === 'guided' ? ' pack--on' : ''}`}
-                onClick={() => setPref('gazeGuide', 'guided')}
+                className={`pack${prefs.gazeGuide === 'lens' ? ' pack--on' : ''}`}
+                onClick={() => setPref('gazeGuide', 'lens')}
               >
-                따라가기 (움직이는 점)
+                카메라 렌즈 (화상 면접)
               </button>
             </div>
           </div>
@@ -443,6 +447,11 @@ export function SetupScreen({ onStart }: Props) {
           </div>
         )}
       </section>
+
+      <div className="banner banner--info">
+        <strong>이어폰을 꼭 써 주세요.</strong> 스피커로 들으면 면접관 목소리가 마이크로 되돌아와 받아쓰기에 섞이고,
+        답변이 끝났는지 판단이 흔들립니다. 이어폰(유선·무선 모두)이면 인식 정확도가 눈에 띄게 올라갑니다.
+      </div>
 
       <div className="row" style={{ justifyContent: 'center' }}>
         <button

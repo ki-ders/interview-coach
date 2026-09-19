@@ -47,6 +47,7 @@ export function makePreviewState(): SessionState {
     llmSummaryPending: false,
     gazeGuideTarget: null,
     blindViolations: [],
+    mannerHits: [],
     video: null,
   };
 }

@@ -29,9 +29,10 @@ const VERDICT_SCHEMA = {
     followUp: { type: 'STRING' },
     handoff: { type: 'BOOLEAN' },
     bridge: { type: 'STRING' },
-    unclear: { type: 'BOOLEAN' },
+    gist: { type: 'STRING' },
+    flags: { type: 'ARRAY', items: { type: 'STRING' } },
   },
-  required: ['relevance', 'note', 'followUp', 'handoff', 'bridge', 'unclear'],
+  required: ['relevance', 'note', 'followUp', 'handoff', 'bridge', 'gist', 'flags'],
 };
 
 const SUMMARY_SCHEMA = {

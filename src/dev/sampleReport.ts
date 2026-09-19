@@ -137,6 +137,7 @@ export function makeSampleReport(): SessionReport {
   );
 
   return {
+    manner: { banmal: 0, profanity: 0, penalty: 0, hits: [] },
     total,
     grade: gradeOf(total),
     breakdown: buildBreakdown(d, text, metrics),

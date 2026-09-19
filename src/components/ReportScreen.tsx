@@ -118,11 +118,31 @@ export function ReportScreen({ report, onRestart, summaryPending, video }: Props
         </section>
       )}
 
+      {report.manner && (report.manner.banmal > 0 || report.manner.profanity > 0) && (
+        <section className="manner-box">
+          <h3>말씨 — 반말 {report.manner.banmal}회 · 비속어 {report.manner.profanity}회 (총점 −{report.manner.penalty})</h3>
+          <ul style={{ margin: 0, paddingLeft: 18 }}>
+            {report.manner.hits.slice(0, 8).map((h, i) => (
+              <li key={i} style={{ fontSize: 13.5, margin: '3px 0' }}>
+                <span className="blind-box__cat">{h.kind === 'profanity' ? '비속어' : '반말'}</span>
+                <span className="blind-box__quote">
+                  Q{h.questionIndex + 1} "{h.excerpt}"
+                </span>
+              </li>
+            ))}
+          </ul>
+          <p className="muted tiny" style={{ margin: '8px 0 0' }}>
+            실제 면접에서 반말·비속어는 내용과 무관하게 바로 감점됩니다. 문장 끝을 "~습니다 / ~요" 로 닫는 연습을 하세요.
+          </p>
+        </section>
+      )}
+
       {video && <VideoBox video={video} />}
 
       <section className="stack" style={{ gap: 14 }}>
         <div className="section-title">
           <h2>항목별 평가</h2>
+          <span className="tiny faint">각 줄의 "기준" 이 만점 구간입니다 — 무엇으로 채점했는지 숨기지 않습니다</span>
         </div>
         <div className="metric-grid">
           {report.breakdown.map((m) => (
@@ -142,7 +162,10 @@ export function ReportScreen({ report, onRestart, summaryPending, video }: Props
               <div className="metric__rows">
                 {m.details.map((d) => (
                   <div className="metric__row" key={d.label}>
-                    <span className="muted">{d.label}</span>
+                    <span className="muted">
+                      {d.label}
+                      {d.target && <span className="metric__target">기준 {d.target}</span>}
+                    </span>
                     <span className={`verdict verdict--${d.verdict}`}>{d.value}</span>
                   </div>
                 ))}
@@ -252,6 +275,7 @@ export function ReportScreen({ report, onRestart, summaryPending, video }: Props
                 </div>
               )}
               <div className="qa__a">{a.transcript || '(인식된 답변 없음)'}</div>
+              {a.gist && <p className="gist">면접관이 이해한 내용: {a.gist}</p>}
               <div className="qa__meta">
                 <span className="chip">길이 {Math.round(a.durationSec)}초</span>
                 {a.latencySec >= 4 && <span className="chip">시작까지 {Math.round(a.latencySec)}초</span>}
@@ -365,6 +389,9 @@ function downloadReport(report: SessionReport) {
     '',
     '── 항목별 평가 ──',
   ];
+  if (report.manner && report.manner.penalty > 0) {
+    lines.splice(2, 0, `말씨: 반말 ${report.manner.banmal}회 · 비속어 ${report.manner.profanity}회 (총점 -${report.manner.penalty})`);
+  }
   if (report.blind?.disqualified) {
     lines.splice(2, 0, '', '── 블라인드 규정 위반 (부적격) ──');
     report.blind.violations.forEach((v) => lines.splice(3, 0, `  · ${v.label}: Q${v.questionIndex + 1} "${v.excerpt}"`));
@@ -384,6 +411,7 @@ function downloadReport(report: SessionReport) {
   report.answers.forEach((a, i) => {
     lines.push(`\nQ${i + 1}. ${a.questionText}`);
     if (a.reasked) lines.push('  ↳ 잘 못 알아들어 다시 물었음');
+    if (a.gist) lines.push(`  면접관이 이해한 내용: ${a.gist}`);
     if (a.followUpAsked) lines.push(`  ↳ 꼬리 질문: ${a.followUpAsked}`);
     lines.push(`  답변: ${a.transcript || '(인식된 답변 없음)'}`);
     lines.push(

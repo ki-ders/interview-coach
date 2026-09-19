@@ -23,6 +23,9 @@ const NOT_NAMES = new Set([
   '한국인', '한국어', '한국사', '이공계', '문과생', '이과생', '장학생', '연구원', '주니어', '시니어',
   '개발자', '기획자', '디자이너', '조직원', '구성원', '성실한', '한마디', '한사람', '고민이', '문제가',
   '조금은', '유일한', '전문가', '고객이', '장기적', '안정적', '주도적', '적극적', '성장형', '노력파',
+  '공무원', '은행원', '편입생', '유학생', '마케터', '변호사', '남학생', '여학생', '인문계', '정직원', '정규직',
+  '임시직', '인턴십', '신중한', '차분한', '진취적', '진솔한', '정확한', '명확한', '원활한', '소극적', '도전적',
+  '오래된', '조교수', '서울시', '채용팀', '지원팀', '개발팀', '기획팀', '신입인', '경력직', '경력자',
 ]);
 
 const SCHOOL_NAMES =
@@ -47,17 +50,30 @@ function excerptAround(text: string, hit: string): string {
   return `${s > 0 ? '…' : ''}${text.slice(s, e).trim()}${e < text.length ? '…' : ''}`;
 }
 
+/** 성씨 + 두 글자 이름 (음성 인식이 "김 민수" 처럼 띄어 적는 경우도 잡는다) */
+const NAME = `[${SURNAMES}]\\s?[가-힣]{2}`;
+
 function nameMention(text: string): string | null {
-  // "제 이름은", "이름은 ○○○"
-  const explicit = firstMatch(text, /(제|저의|내|저희)\s*이름(은|이)\s*[가-힣]{2,4}/);
+  // "제 이름은 ○○○", "이름은 ○○○"
+  const explicit = firstMatch(text, /(제|저의|내|저희)?\s*이름(은|이|을)\s*[가-힣]{2,4}/);
   if (explicit) return explicit;
-  // "○○○라고 합니다" / "○○○입니다" 가 성씨로 시작하는 세 글자(또는 두 글자 성+한 글자)일 때
-  const re = new RegExp(`(?<![가-힣])([${SURNAMES}][가-힣]{2})\\s*(이라고|라고)\\s*(합니다|해요|부릅니다)`);
-  const said = text.match(re);
-  if (said && !NOT_NAMES.has(said[1])) return said[0];
-  const intro = new RegExp(`저는\\s*([${SURNAMES}][가-힣]{2})(입니다|이고|이며|이라고|입니다만)`);
-  const m = text.match(intro);
-  if (m && !NOT_NAMES.has(m[1])) return m[0];
+  const candidates: RegExp[] = [
+    // "김민수라고 합니다", "김민수라고 해요"
+    new RegExp(`(?<![가-힣])(${NAME})\\s*(이라고|라고)\\s*(합니다|해요|부릅니다|불러|해)`),
+    // "저는 김민수입니다", "저는 김민수 입니다", "저는 김민수이고", "전 김민수예요"
+    new RegExp(`(저는|전|나는|난)\\s*(${NAME})\\s*(입니다|이고|이며|이라고|입니다만|예요|이에요|야|이야|다)(?![가-힣])`),
+    // 답변 첫머리 "김민수입니다" / "안녕하세요 김민수입니다"
+    new RegExp(`(^|안녕하세요[,.]?\\s*|반갑습니다[,.]?\\s*)(${NAME})\\s*(입니다|이라고|예요|이에요)`),
+    // "지원자 김민수입니다", "○○ 지원자 김민수"
+    new RegExp(`지원자\\s*(${NAME})(?=\\s*(입니다|이라고|예요|이에요|이고|이며|$|\\s))`),
+  ];
+  for (const re of candidates) {
+    const m = text.match(re);
+    if (!m) continue;
+    // 캡처 그룹 중 이름 후보(성씨로 시작하는 것)를 찾는다
+    const name = m.slice(1).find((g) => g && new RegExp(`^${NAME}$`).test(g))?.replace(/\s/g, '');
+    if (name && !NOT_NAMES.has(name) && name.length >= 2) return m[0].trim();
+  }
   return null;
 }
 

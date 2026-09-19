@@ -30,7 +30,7 @@ const baseConfig = (questions: SessionConfig['questions'], over: Partial<Session
   silenceEndSec: 2.5,
   llmProvider: 'none',
   apiKey: '',
-  gazeGuide: 'fixed',
+  gazeGuide: 'interviewer',
   blindMode: false,
   recordVideo: true,
   ...over,
@@ -208,7 +208,7 @@ SCENARIOS.push({
   name: '블라인드 면접 (규정 위반)',
   description:
     '블라인드 모드. 1번 답변에서 이름·학교를 말해 면접관이 즉시 지적하고, 2번은 깨끗, 3번 짧은 답 뒤 꼬리질문 답변에서 수상 실적을 말한다 → 부적격',
-  config: baseConfig(common.slice(0, 3), { blindMode: true, gazeGuide: 'guided' }),
+  config: baseConfig(common.slice(0, 3), { blindMode: true }),
   behaviors: [CALM],
   answers: [
     {
@@ -230,7 +230,7 @@ SCENARIOS.push({
     '1번 답변 뒤 "블라인드 면접 규정상 성명은 말씀하시면 안 됩니다" 지적, 경고 목록에 성명·출신 학교 (1번은 깊이 부족으로 꼬리질문이 붙어 2번 대본을 소비한다)',
     '짧은 답 뒤 꼬리질문 답변에서 수상 실적 지적',
     '리포트 등급이 "부적격" 이고 위반 3건(성명·출신 학교·수상 실적)이 발췌와 함께 나열된다',
-    '시선 안내 점이 렌즈와 면접관 얼굴 사이를 오간다 (gazeGuideTarget 이 lens ↔ 면접관 id 로 바뀐다)',
+    '시선 안내 점이 질문한 면접관 눈에 있다가 가끔 옆 면접관으로 갔다 돌아온다 (gazeGuideTarget)',
   ],
 });
 
@@ -238,11 +238,11 @@ SCENARIOS.push({
   id: 'reask',
   name: '못 알아들음 → 다시 묻기',
   description:
-    '1번 답변은 인식 신뢰도 0.3 으로 뭉개져 면접관이 "다시 한번 말씀해 주시겠어요?" 라고 하고, 다시 말한 답이 기록된다. 2번은 정상',
+    '1번 답변은 인식 신뢰도 0.2 로 뭉개져 면접관이 "다시 한번 말씀해 주시겠어요?" 라고 하고, 다시 말한 답이 기록된다. 2번은 정상',
   config: baseConfig(common.slice(0, 2), { allowFollowUps: false, recordVideo: true }),
   behaviors: [CALM],
   answers: [
-    { text: '저는 그 데이터 어 분석 그러니까 그게 통계 프로젝트를 했었고 어 예측을 했습니다.', confidence: 0.3 },
+    { text: '저는 그 데이터 어 분석 그러니까 그게 통계 프로젝트를 했었고 어 예측을 했습니다.', confidence: 0.2 },
     {
       text:
         '네, 저는 데이터 분석을 전공한 지원자입니다. 학부 때 3년간 통계 프로젝트를 진행했고, 마지막 학기에는 팀 다섯 명을 이끌며 수요 예측 모델을 만들었습니다. ' +
@@ -258,5 +258,26 @@ SCENARIOS.push({
     '1번 첫 답변 뒤 면접관이 다시 말해 달라고 하고(reasked=true), 기록된 답변은 두 번째로 말한 긴 답이다',
     '리포트 말투 항목에 "또박또박함 (인식 신뢰도)" 가 있고, 등급이 S~F 한 글자다',
     '리포트에 녹화 영상(재생·저장 버튼) 이 뜬다',
+  ],
+});
+
+SCENARIOS.push({
+  id: 'manner',
+  name: '반말·비속어',
+  description: '1번 답변은 반말, 2번 답변에 비속어 → 창에 경고, 면접관이 한마디, 리포트에 감점',
+  config: baseConfig(common.slice(0, 2), { allowFollowUps: false }),
+  behaviors: [CALM],
+  answers: [
+    {
+      text: '나는 데이터 분석을 전공했어. 학부 때 3년 동안 통계 프로젝트를 했고 마지막 학기에는 팀을 이끌면서 수요 예측 모델을 만들었지. 예측 오차를 18퍼센트 줄인 게 제일 큰 성과야.',
+    },
+    {
+      text: '제 강점은 끝까지 파고드는 집요함입니다. 작년 프로젝트에서 씨발 로그를 사흘 동안 추적해서 센서 오류를 찾았습니다. 약점은 완벽을 추구하다 일정이 밀린 적이 있다는 점입니다.',
+    },
+  ],
+  expectations: [
+    '1번 답변 뒤 "반말이 감지됐습니다" 경고 (전공했어·만들었지·성과야)',
+    '2번 답변 뒤 "비속어가 감지됐습니다" 경고와 면접관의 한마디 ("면접 자리입니다…")',
+    '리포트에 말씨 상자(반말 n회·비속어 1회, 총점 감점)가 뜬다',
   ],
 });

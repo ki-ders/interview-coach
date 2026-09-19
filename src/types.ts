@@ -83,8 +83,8 @@ export type LiveMetrics = Record<MetricKey, number>;
 
 export interface LiveAlert {
   id: number;
-  /** 지표 키, 또는 블라인드 면접 규정 위반 */
-  key: MetricKey | 'blind';
+  /** 지표 키, 블라인드 면접 규정 위반, 또는 말씨(반말·비속어) */
+  key: MetricKey | 'blind' | 'manner';
   text: string;
   t: number;
 }
@@ -111,6 +111,8 @@ export interface AnswerRecord {
   clarity: number | null;
   /** 잘 못 알아들어 다시 말해 달라고 했는지 */
   reasked: boolean;
+  /** 면접관 AI 가 오인식을 감안해 이해한 답변 요지 */
+  gist?: string;
 }
 
 export interface SpeechAnalysis {
@@ -137,7 +139,7 @@ export interface MetricBreakdown {
   label: string;
   score: number;
   summary: string;
-  details: { label: string; value: string; verdict: 'good' | 'warn' | 'bad' }[];
+  details: { label: string; value: string; verdict: 'good' | 'warn' | 'bad'; target?: string }[];
   tips: string[];
 }
 
@@ -158,6 +160,15 @@ export interface SessionReport {
   alerts: LiveAlert[];
   /** 블라인드 면접 모드였다면 규정 위반 내역. 하나라도 있으면 부적격 */
   blind?: { violations: BlindViolation[]; disqualified: boolean };
+  /** 반말·비속어 (총점에서 깎인 점수 포함) */
+  manner: { banmal: number; profanity: number; penalty: number; hits: MannerHit[] };
+}
+
+export interface MannerHit {
+  kind: 'banmal' | 'profanity';
+  word: string;
+  excerpt: string;
+  questionIndex: number;
 }
 
 export type BlindCategory = 'name' | 'school' | 'family' | 'award' | 'examNo';
@@ -180,8 +191,8 @@ export interface SessionConfig {
   /** 면접관 두뇌: 'none' | 'gemini' | 'claude' */
   llmProvider: 'none' | 'gemini' | 'claude';
   apiKey: string;
-  /** 시선 안내: 렌즈 한 점만 표시(fixed) / 면접관과 렌즈 사이를 오가는 점을 따라가기(guided) */
-  gazeGuide: 'fixed' | 'guided';
+  /** 시선 기준: 질문한 면접관의 눈(interviewer, 기본) / 카메라 렌즈(lens) */
+  gazeGuide: 'interviewer' | 'lens';
   /** 블라인드 면접: 성명·출신 학교·가족·수상·수험번호를 말하면 부적격 */
   blindMode: boolean;
   /** 면접 영상을 녹화해 끝나고 파일로 준다 (기기 밖으로 나가지 않는다) */

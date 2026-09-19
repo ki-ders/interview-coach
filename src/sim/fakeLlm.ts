@@ -34,7 +34,8 @@ export class FakeLlm implements InterviewerLlm {
         followUp: '',
         handoff: false,
         bridge: '수요 예측 얘기 흥미롭게 들었습니다.',
-        unclear: false,
+        gist: '',
+        flags: [],
       };
       this.log(`가짜 LLM: 평가 ${v.relevance}, 연결문장 있음`);
       return v;
@@ -47,7 +48,8 @@ export class FakeLlm implements InterviewerLlm {
         followUp: '로그를 사흘 동안 추적했다고 하셨는데, 그 판단이 옳았다는 걸 어떻게 확인하셨나요?',
         handoff: true,
         bridge: '',
-        unclear: false,
+        gist: '',
+        flags: [],
       };
       this.log(`가짜 LLM: ${o.other.name} 교수가 이어받아 되물음`);
       return v;
@@ -58,7 +60,8 @@ export class FakeLlm implements InterviewerLlm {
       followUp: words < 8 ? '조금 더 구체적으로, 어떤 점에 끌리셨는지 말씀해 주시겠어요?' : '',
       handoff: false,
       bridge: '',
-      unclear: false,
+      gist: '',
+        flags: [],
     };
     this.log(`가짜 LLM: 평가 ${v.relevance}${v.followUp ? ', 되물음' : ''}`);
     return v;
