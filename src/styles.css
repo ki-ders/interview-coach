@@ -2335,3 +2335,54 @@ textarea.input {
   animation: lens-pulse 1s ease-in-out infinite;
   border-radius: 999px;
 }
+
+/* 사진 배경(기본)에서는 면접관을 조금 작게, 사진 가장자리는 더 부드럽게 */
+.office--photo .seat {
+  width: 30%;
+}
+
+.office--photo .seat--left {
+  left: 17%;
+}
+
+.office--photo .seat--right {
+  right: 17%;
+}
+
+.office--photo .seat__card {
+  bottom: 27%;
+  -webkit-mask-image: radial-gradient(ellipse 52% 60% at 50% 46%, #000 48%, transparent 100%);
+  mask-image: radial-gradient(ellipse 52% 60% at 50% 46%, #000 48%, transparent 100%);
+}
+
+/* 보정: 방이 보이도록 위쪽 띠로 안내한다 */
+.calib-bar {
+  position: fixed;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 40;
+  width: min(680px, calc(100% - 24px));
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 16px;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  border: 1px solid var(--accent);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(8px);
+}
+
+.calib-bar__text {
+  flex: 1;
+  min-width: 0;
+}
+
+.calib__ring--sm {
+  width: 52px;
+  height: 52px;
+  font-size: 22px;
+  flex: none;
+  margin: 0;
+}

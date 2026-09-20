@@ -32,10 +32,11 @@ import {
 import { analyzeRelevance, analyzeSpeech } from '../scoring/korean';
 import { ackOf, closingOf, decideFollowUp, greetingOf, silenceNudgeOf, summarizeContent } from './brain';
 import { decideTurnPolicy } from './turn';
-import { BLIND_LABEL, BLIND_RULE_LINE, blindWarningLine, detectBlindViolations } from './blind';
+import { BLIND_LABEL, BLIND_RULE_LINE, blindWarningLine, detectBlindViolations, detectWatchlist } from './blind';
 import { detectManner, mannerRemarkLine } from './manner';
 import { judgeIntelligibility, reaskLineOf } from './clarity';
 import { SessionRecorder, type Recording } from '../lib/recorder';
+import { AnswerRecorder, type AnswerAudio } from '../audio/answerRecorder';
 import { createInterviewerLlm, type InterviewerLlm } from './llm';
 import { clamp, gradeOf, weighted } from '../lib/signal';
 import { startTicker } from '../lib/ticker';
@@ -44,7 +45,7 @@ export type Phase = 'idle' | 'loading' | 'calibrating' | 'ready' | 'running' | '
 
 export type AvatarState = 'idle' | 'speaking' | 'listening' | 'writing' | 'nodding';
 
-export type CalibStep = 'noise' | 'center' | 'side' | 'down' | 'done';
+export type CalibStep = 'noise' | 'left' | 'right' | 'lens' | 'down' | 'done';
 
 export interface Subtitle {
   speakerId: string;
@@ -227,6 +228,7 @@ export function useSession(deps: SessionDeps = defaultDeps) {
   /** 스피커 소리가 마이크로 되돌아온 횟수 — 이어폰 권유 판단 */
   const echoNoticedRef = useRef(false);
   const recorderRef = useRef(new SessionRecorder());
+  const answerRecRef = useRef(new AnswerRecorder());
   const videoUrlRef = useRef<string | null>(null);
 
   const releaseMedia = useCallback(() => {
@@ -487,7 +489,8 @@ export function useSession(deps: SessionDeps = defaultDeps) {
       return calibRef.current.collector.median();
     };
 
-    patch({ phase: 'calibrating' });
+    const ids = configRef.current?.interviewerIds ?? ['', ''];
+    patch({ phase: 'calibrating', gazeGuideTarget: null });
 
     mic.startNoiseCalibration();
     for (let i = 3; i > 0; i--) {
@@ -497,19 +500,31 @@ export function useSession(deps: SessionDeps = defaultDeps) {
     }
     mic.finishNoiseCalibration();
 
-    const center = await collect('center', 3);
+    // 실제로 바라볼 지점(왼쪽 면접관 눈 → 오른쪽 면접관 눈 → 렌즈 → 책상)을 차례로 보게 해서 원시값을 잰다
+    patch({ gazeGuideTarget: ids[0] });
+    const left = await collect('left', 3);
     if (abortRef.current) return false;
-    const side = await collect('side', 2);
+    patch({ gazeGuideTarget: ids[1] });
+    const right = await collect('right', 3);
     if (abortRef.current) return false;
+    patch({ gazeGuideTarget: 'lens' });
+    const lens = await collect('lens', 2);
+    if (abortRef.current) return false;
+    patch({ gazeGuideTarget: null });
     const down = await collect('down', 2);
     if (abortRef.current) return false;
 
-    if (center) {
+    const d = DEFAULT_CALIBRATION.points;
+    if (lens || (left && right)) {
+      // 못 잰 지점은 잰 지점에서 기본 간격만큼 떨어진 곳으로 채운다
+      const lensPt = lens ?? { x: ((left?.x ?? d.left.x) + (right?.x ?? d.right.x)) / 2, y: ((left?.y ?? d.left.y) + (right?.y ?? d.right.y)) / 2 + (d.lens.y - d.left.y) };
       vision.calibration = {
-        centerX: center.x,
-        centerY: center.y,
-        spanX: side ? side.x - center.x : DEFAULT_CALIBRATION.spanX,
-        spanY: down ? down.y - center.y : DEFAULT_CALIBRATION.spanY,
+        points: {
+          lens: lensPt,
+          left: left ?? { x: lensPt.x + (d.left.x - d.lens.x), y: lensPt.y + (d.left.y - d.lens.y) },
+          right: right ?? { x: lensPt.x + (d.right.x - d.lens.x), y: lensPt.y + (d.right.y - d.lens.y) },
+          down: down ?? { x: lensPt.x, y: lensPt.y + (d.down.y - d.lens.y) },
+        },
         calibrated: true,
       };
     } else {
@@ -540,25 +555,20 @@ export function useSession(deps: SessionDeps = defaultDeps) {
    */
   const guide = useCallback(
     (target: 'lens' | string) => {
-      if (configRef.current?.gazeGuide !== 'interviewer') return;
-      if (target === 'lens') visionRef.current.resetTarget();
+      const cfg = configRef.current;
+      if (!cfg || cfg.gazeGuide !== 'interviewer') return;
+      const side = target === cfg.interviewerIds[0] ? 'left' : target === cfg.interviewerIds[1] ? 'right' : 'lens';
+      visionRef.current.setTarget(side);
       patch({ gazeGuideTarget: target });
     },
     [patch],
   );
-
-  /** 화면(InterviewRoom)이 안내 점의 실제 위치를 재서 알려주면 분석기의 기준점을 옮긴다 */
-  const onGuideMeasured = useCallback((fx: number, fy: number) => {
-    if (configRef.current?.gazeGuide !== 'interviewer') return;
-    visionRef.current.setTargetScreen(fx, fy);
-  }, []);
 
   const speak = useCallback(
     async (text: string, who: Interviewer, isQuestion = false) => {
       if (abortRef.current) return;
       const stt = sttRef.current;
       stt.gated = true;
-      patch({ subtitle: { speakerId: who.id, text, isQuestion } });
       setAvatars(who.id, 'speaking');
       // 말하는 사람을 보는 게 자연스럽다
       guide(who.id);
@@ -566,6 +576,10 @@ export function useSession(deps: SessionDeps = defaultDeps) {
       stt.ignoreText = text;
       const handle = ttsRef.current.speak(text, who);
       speakHandleRef.current = handle;
+      // 자막은 소리가 실제로 나기 시작할 때 띄운다 (블루투스 이어폰 지연으로 글이 먼저 보이지 않게)
+      void handle.started.then(() => {
+        if (speakHandleRef.current === handle) patch({ subtitle: { speakerId: who.id, text, isQuestion } });
+      });
       await handle.done;
       speakHandleRef.current = null;
       ttsEndedAtRef.current = performance.now();
@@ -588,7 +602,15 @@ export function useSession(deps: SessionDeps = defaultDeps) {
   const listenForAnswer = useCallback(
     async (
       asker: Interviewer,
-    ): Promise<{ text: string; stats: RawStats; durationSec: number; latencySec: number; clarity: number | null; cutOff: boolean }> => {
+    ): Promise<{
+      text: string;
+      stats: RawStats;
+      durationSec: number;
+      latencySec: number;
+      clarity: number | null;
+      cutOff: boolean;
+      audio: AnswerAudio | null;
+    }> => {
       const cfg = configRef.current!;
       const stt = sttRef.current;
       const stats = emptyStats();
@@ -600,6 +622,8 @@ export function useSession(deps: SessionDeps = defaultDeps) {
       stt.beginTurn();
       stt.start();
       openMicSoon();
+      // 두뇌가 음성을 직접 들을 수 있으면 이 턴의 목소리를 따로 녹음해 둔다
+      if (cfg.accurateStt && llmRef.current?.transcribe && streamRef.current) answerRecRef.current.start(streamRef.current);
       heardSpeechRef.current = false;
       lastUserVoiceRef.current = performance.now();
       answeringRef.current = true;
@@ -695,12 +719,13 @@ export function useSession(deps: SessionDeps = defaultDeps) {
       // 첫 마디까지 걸린 시간. 한마디도 없었으면 답변 시간 전체를 "기다린 시간"으로 본다
       const latencySec = heardSpeechRef.current ? Math.max(0, (heardAtRef.current - start) / 1000) : durationSec;
       const text = stt.endTurn();
+      const audio = await answerRecRef.current.stop().catch(() => null);
       guide(asker.id);
       if (cutOff) {
         // 실제 면접처럼 시간이 다 되면 말을 끊는다
         await speak(asker.mood === 'stern' ? '시간 관계상 여기까지 듣겠습니다.' : '네, 시간 관계상 여기까지 듣겠습니다. 감사합니다.', asker);
       }
-      return { text, stats, durationSec, latencySec, clarity: stt.lastTurnConfidence, cutOff };
+      return { text, stats, durationSec, latencySec, clarity: stt.lastTurnConfidence, cutOff, audio };
     },
     [guide, openMicSoon, patch, setAvatars, speak],
   );
@@ -838,10 +863,30 @@ export function useSession(deps: SessionDeps = defaultDeps) {
       }
     }
 
+    /**
+     * 두뇌가 음성을 직접 들을 수 있으면 브라우저 받아쓰기를 정확한 전사로 바꾼다.
+     * 면접관이 메모하는 동안(최대 12초) 기다리고, 안 되면 원래 받아쓰기를 그대로 쓴다.
+     */
+    const refineTranscript = async <T extends { text: string; audio: AnswerAudio | null; stats: RawStats; clarity: number | null }>(turn: T): Promise<T> => {
+      const brain = llmRef.current;
+      if (!cfg.accurateStt || !brain?.transcribe || !turn.audio) return turn;
+      // 한마디도 없었으면(소리 1초 미만) 보낼 필요가 없다
+      if (turn.stats.voicedMs < 1000 && !turn.text.trim()) return turn;
+      const timeout = new Promise<null>((r) => setTimeout(() => r(null), 12000));
+      const refined = await Promise.race([brain.transcribe(turn.audio.blob, turn.audio.mimeType, turn.text), timeout]).catch(() => null);
+      if (!refined) return turn;
+      patch({ transcript: refined, interim: '' });
+      // 정확한 전사가 됐으니 브라우저 신뢰도로 되묻지 않는다
+      return { ...turn, text: refined, clarity: null };
+    };
+
     /** 블라인드 규정 위반을 기록하고 면접관이 즉석에서 지적한다. extra 는 두뇌(LLM)가 잡은 항목 */
     const checkBlind = async (text: string, questionIndex: number, who: Interviewer, extra: BlindViolation['category'][] = []) => {
       if (!cfg.blindMode) return;
       const found = detectBlindViolations(text, questionIndex);
+      for (const w of detectWatchlist(text, cfg.blindWatch, questionIndex)) {
+        if (!found.some((v) => v.category === w.category)) found.push(w);
+      }
       for (const cat of extra) {
         if (found.some((v) => v.category === cat)) continue;
         if (blindRef.current.some((v) => v.category === cat && v.questionIndex === questionIndex)) continue;
@@ -920,13 +965,17 @@ export function useSession(deps: SessionDeps = defaultDeps) {
         let first = await listenForAnswer(asker);
         if (abortRef.current) break;
         let reasked = false;
+        // 정확한 전사가 되면 브라우저 받아쓰기를 그것으로 바꾼다 (되묻기·블라인드·평가 전부 이 텍스트로)
+        setAvatars(asker.id, 'writing', 'writing');
+        first = await refineTranscript(first);
+        if (abortRef.current) break;
 
         // 받아쓰기가 못 믿을 정도면 (신뢰도 낮음·인식된 글자가 너무 적음) 한 번 다시 말해 달라고 한다
         const clarity = judgeIntelligibility({ text: first.text, confidence: first.clarity, voicedSec: first.stats.voicedMs / 1000 });
         if (clarity.unclear && first.text.trim()) {
           reasked = true;
           await speak(reaskLineOf(asker), asker);
-          const again = await listenForAnswer(asker);
+          const again = await refineTranscript(await listenForAnswer(asker));
           if (abortRef.current) break;
           // 다시 말한 게 있으면 그걸 답변으로 삼는다 (처음 것은 오인식으로 보고 버린다)
           if (again.text.trim()) first = { ...again, latencySec: first.latencySec };
@@ -1012,7 +1061,7 @@ export function useSession(deps: SessionDeps = defaultDeps) {
           } else {
             await speak(followUpText, asker);
           }
-          const second = await listenForAnswer(followUpAsker);
+          const second = await refineTranscript(await listenForAnswer(followUpAsker));
           if (!abortRef.current) {
             await checkBlind(second.text, i, followUpAsker);
             await checkManner(second.text, i, followUpAsker);
@@ -1088,7 +1137,7 @@ export function useSession(deps: SessionDeps = defaultDeps) {
     if (mountedRef.current) setState(initialState());
   }, [teardown]);
 
-  return { state, videoRef, prepare, runCalibration, start, abort, reset, onGuideMeasured };
+  return { state, videoRef, prepare, runCalibration, start, abort, reset };
 }
 
 /* ── 헬퍼 ─────────────────────────────────────────────────────── */

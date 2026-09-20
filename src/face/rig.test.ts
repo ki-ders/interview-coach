@@ -29,7 +29,9 @@ describe('buildRig', () => {
     const corners = new Set<number>(LM.mouthCorners);
     for (const i of LM.lowerLipInner) if (!corners.has(i)) expect(rig.jawWeight[i]).toBe(1);
     for (const i of LM.mouthCorners) expect(rig.jawWeight[i]).toBeCloseTo(0.35, 5);
-    expect(rig.jawWeight[LM.chin]).toBeGreaterThan(0.9);
+    // 턱 끝은 아랫입술보다 덜 내려간다 (턱이 늘어나 보이지 않게)
+    expect(rig.jawWeight[LM.chin]).toBeGreaterThan(0.55);
+    expect(rig.jawWeight[LM.chin]).toBeLessThan(0.85);
     for (const i of LM.upperLipOuter) if (!corners.has(i)) expect(rig.jawWeight[i]).toBe(0);
     for (const i of LM.rightBrow) expect(rig.jawWeight[i]).toBe(0);
     expect(rig.jawWeight[LM.noseTip]).toBe(0);
@@ -57,8 +59,9 @@ describe('deform', () => {
     const open = run({ jaw: 1 });
     const dropLower = y(open, LM.lowerLipCenter) - y(base, LM.lowerLipCenter);
     const dropChin = y(open, LM.chin) - y(base, LM.chin);
-    expect(dropLower).toBeGreaterThan(rig.faceH * 0.05);
-    expect(dropChin).toBeGreaterThan(rig.faceH * 0.05);
+    expect(dropLower).toBeGreaterThan(rig.faceH * 0.035);
+    expect(dropChin).toBeGreaterThan(rig.faceH * 0.02);
+    expect(dropChin).toBeLessThan(dropLower);
     expect(y(open, LM.upperLipCenter)).toBeCloseTo(y(base, LM.upperLipCenter), 3);
     expect(y(open, LM.noseTip)).toBeCloseTo(y(base, LM.noseTip), 3);
   });
@@ -76,7 +79,7 @@ describe('deform', () => {
     };
     const closed = area(run({}));
     const open = area(run({ jaw: 1 }));
-    expect(open).toBeGreaterThan(closed * 3);
+    expect(open).toBeGreaterThan(closed * 2.2);
   });
 
   it('깜빡이면 윗눈꺼풀이 아랫눈꺼풀에 거의 닿는다', () => {

@@ -35,7 +35,9 @@ export const CALM: Behavior = {
   swayAmp: 0.004,
 };
 
-export type ForcedPose = 'free' | 'center' | 'side' | 'down';
+export type ForcedPose = 'free' | 'lens' | 'left' | 'right' | 'down';
+/** 면접관 눈을 볼 때의 머리 회전. 왼쪽 면접관을 보면 카메라 영상에서 코가 +x */
+const SEAT_YAW = 0.18;
 
 /** 사인파 진폭 → dBFS. 가짜 마이크가 이 크기로 소리를 낸다 */
 export const VOICE_DBFS: Record<VoiceStyle, number> = { normal: -25, quiet: -46, loud: -15 };
@@ -49,6 +51,8 @@ export class SimWorld {
   behavior: Behavior = CALM;
   /** 보정 단계에서는 시나리오와 무관하게 시키는 곳을 본다 */
   forcedPose: ForcedPose = 'free';
+  /** 면접 중 안내 점이 가리키는 쪽 (세션 상태에서 받아온다) */
+  lookSide: 'left' | 'right' | 'lens' = 'lens';
   /** 지원자가 소리를 내고 있는가 (가짜 인식기가 켜고 끈다) */
   speaking = false;
   /** 면접관 TTS 가 재생 중인가 (스피커 에코 흉내) */
@@ -102,9 +106,15 @@ export class SimWorld {
     let eyeX = 0;
     let eyeY = 0;
 
-    if (this.forcedPose === 'side') yaw += 0.35;
+    if (this.forcedPose === 'left') yaw += SEAT_YAW;
+    else if (this.forcedPose === 'right') yaw -= SEAT_YAW;
     else if (this.forcedPose === 'down') pitch += 0.4;
     else if (this.forcedPose === 'free') {
+      // 카메라 응시 행동은 "지금 봐야 할 면접관" 을 본다 (안내 점을 따라간다)
+      if (b.gaze === 'camera' || b.gaze === 'mixed') {
+        if (this.lookSide === 'left') yaw += SEAT_YAW;
+        else if (this.lookSide === 'right') yaw -= SEAT_YAW;
+      }
       switch (b.gaze) {
         case 'away':
           yaw += 0.42;
@@ -183,11 +193,13 @@ export class SimWorld {
    * 세션 상태에 맞춰 지원자의 행동을 바꾼다.
    * 보정 중에는 시키는 곳을 보고, 면접 중에는 질문 인덱스에 해당하는 대본 행동을 한다.
    */
-  follow(phase: string, calibStep: string, questionIndex: number, behaviors: Behavior[]) {
+  follow(phase: string, calibStep: string, questionIndex: number, behaviors: Behavior[], lookSide: 'left' | 'right' | 'lens' = 'lens') {
+    this.lookSide = lookSide;
     if (phase === 'calibrating') {
       this.behavior = CALM;
       this.speaking = false;
-      this.forcedPose = calibStep === 'center' || calibStep === 'side' || calibStep === 'down' ? calibStep : 'free';
+      this.forcedPose =
+        calibStep === 'lens' || calibStep === 'left' || calibStep === 'right' || calibStep === 'down' ? calibStep : 'free';
       this.faceVisible = true;
       return;
     }
@@ -211,7 +223,7 @@ export class SimWorld {
 
   describe(): string {
     if (this.forcedPose !== 'free') {
-      return { center: '정면 응시', side: '왼쪽 끝 응시', down: '아래 응시' }[this.forcedPose];
+      return { lens: '렌즈 응시', left: '왼쪽 면접관 응시', right: '오른쪽 면접관 응시', down: '아래 응시' }[this.forcedPose];
     }
     const b = this.behavior;
     const parts: string[] = [];

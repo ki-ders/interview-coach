@@ -39,8 +39,10 @@ export function SimDriver({ state, world, scenario, log, bus, onBegin, onStart }
 
   // 보정 단계: 시키는 곳을 본다. 면접 중: 질문별 행동.
   useEffect(() => {
-    world.follow(state.phase, state.calibStep, state.questionIndex, scenario.behaviors);
-  }, [state.phase, state.calibStep, state.questionIndex, world, scenario]);
+    const ids = scenario.config.interviewerIds;
+    const side = state.gazeGuideTarget === ids[0] ? 'left' : state.gazeGuideTarget === ids[1] ? 'right' : 'lens';
+    world.follow(state.phase, state.calibStep, state.questionIndex, scenario.behaviors, side);
+  }, [state.phase, state.calibStep, state.questionIndex, state.gazeGuideTarget, world, scenario]);
 
   // 콜백은 매 렌더마다 새 함수일 수 있으므로 ref 로 최신 것을 들고 있는다
   const onStartRef = useRef(onStart);

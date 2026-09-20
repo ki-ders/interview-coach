@@ -1,6 +1,6 @@
 /**
  * 면접관 사진 관리.
- * 기본은 public/interviewers/{id}.jpg, 사용자가 올린 사진은 localStorage 에 dataURL 로 보관한다.
+ * 기본은 public/interviewers/{id}.webp (앱에 들어 있는 가상 인물 사진), 사용자가 올린 사진은 localStorage 에 dataURL 로 보관한다.
  */
 
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
@@ -29,7 +29,7 @@ export function getPhotoSource(id: string): PhotoSource {
   } catch {
     /* localStorage 접근 불가 */
   }
-  return { src: `${base}/interviewers/${id}.jpg`, key: `default-${id}`, custom: false };
+  return { src: `${base}/interviewers/${id}.webp`, key: `default-${id}`, custom: false };
 }
 
 export function hasCustomPhoto(id: string): boolean {
@@ -80,12 +80,23 @@ export function notifyPhotoChanged(id: string) {
 const BACKDROP_KEY = 'interview-coach:backdrop';
 const BACKDROP_MAX_SIDE = 1600;
 
-/** 사용자가 올린 면접장 배경 (없으면 null → CSS 로 그린 방을 쓴다) */
-export function getBackdrop(): string | null {
+/** 앱에 들어 있는 기본 면접장 사진 */
+export const DEFAULT_BACKDROP = `${base}/room/default.webp`;
+
+/** 면접장 배경: 사용자가 올린 사진, 없으면 기본 사진 */
+export function getBackdrop(): string {
   try {
-    return localStorage.getItem(BACKDROP_KEY);
+    return localStorage.getItem(BACKDROP_KEY) ?? DEFAULT_BACKDROP;
   } catch {
-    return null;
+    return DEFAULT_BACKDROP;
+  }
+}
+
+export function hasCustomBackdrop(): boolean {
+  try {
+    return localStorage.getItem(BACKDROP_KEY) !== null;
+  } catch {
+    return false;
   }
 }
 

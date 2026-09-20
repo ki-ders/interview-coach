@@ -2,68 +2,83 @@ import { describe, expect, it } from 'vitest';
 import { CalibrationCollector, DEFAULT_CALIBRATION, VisionAnalyzer } from './analyzer';
 import { NO_FACE, SEATED, makeRng, synthFace, synthPose, type PoseParams } from '../sim/synth';
 
-/** 앱의 보정 절차와 같은 순서로 보정값을 만든다: 정면 → 화면 왼쪽 끝 → 아래 */
-function calibrate(v: VisionAnalyzer, opts: { sideYaw?: number; downPitch?: number; noise?: number } = {}) {
+/** 면접관 눈을 볼 때의 머리 회전 (라디안). 화면 왼쪽을 보면 카메라 영상에서 코는 +x 로 간다 */
+const SEAT_YAW = 0.18;
+const DESK_PITCH = 0.4;
+
+/** 앱의 보정 절차와 같은 순서로 보정값을 만든다: 왼쪽 면접관 → 오른쪽 면접관 → 렌즈 → 아래 */
+function calibrate(v: VisionAnalyzer, opts: { noise?: number } = {}) {
   const rng = makeRng(11);
   const collect = (params: Parameters<typeof synthFace>[0]) => {
     const c = new CalibrationCollector();
     for (let i = 0; i < 40; i++) c.add(synthFace({ ...params, noise: opts.noise ?? 0 }, rng));
     return c.median()!;
   };
-  const center = collect({});
-  // 사용자가 자기 왼쪽(화면 왼쪽 끝)을 보면 카메라 영상에서 코는 오른쪽(+x)으로 간다
-  const side = collect({ yaw: opts.sideYaw ?? 0.35 });
-  const down = collect({ pitch: opts.downPitch ?? 0.4 });
   v.calibration = {
-    centerX: center.x,
-    centerY: center.y,
-    spanX: side.x - center.x,
-    spanY: down.y - center.y,
+    points: {
+      left: collect({ yaw: SEAT_YAW }),
+      right: collect({ yaw: -SEAT_YAW }),
+      lens: collect({}),
+      down: collect({ pitch: DESK_PITCH }),
+    },
     calibrated: true,
   };
   return v.calibration;
 }
 
-describe('시선: 보정과 판정의 부호가 맞는다', () => {
-  it('보정값: 왼쪽 끝은 +x, 아래는 -y 로 잡힌다', () => {
+describe('시선: 기준점 보정과 판정', () => {
+  it('보정값: 왼쪽 면접관은 +x, 오른쪽은 -x, 아래는 -y 로 잡힌다', () => {
     const v = new VisionAnalyzer();
     const cal = calibrate(v);
-    expect(cal.spanX).toBeGreaterThan(0.15);
-    expect(cal.spanY).toBeLessThan(-0.1);
+    expect(cal.points.left.x).toBeGreaterThan(cal.points.lens.x + 0.05);
+    expect(cal.points.right.x).toBeLessThan(cal.points.lens.x - 0.05);
+    expect(cal.points.down.y).toBeLessThan(cal.points.lens.y - 0.1);
   });
 
-  it('정면은 on-target, 보정한 만큼 돌리면 가장자리(±1)', () => {
+  it('렌즈 기준: 정면은 on-target, 면접관 자리를 보면 ±1', () => {
     const v = new VisionAnalyzer();
     calibrate(v);
+    v.setTarget('lens');
     const front = v.face(synthFace({}))!;
     expect(front.onTarget).toBe(true);
     expect(Math.abs(front.yawDev)).toBeLessThan(0.1);
     expect(front.lookingDown).toBe(false);
 
-    const left = v.face(synthFace({ yaw: 0.35 }))!;
+    const left = v.face(synthFace({ yaw: SEAT_YAW }))!;
     expect(left.yawDev).toBeCloseTo(1, 1);
     expect(left.onTarget).toBe(false);
-
-    // 반대쪽(오른쪽 끝)도 대칭으로 -1
-    const right = v.face(synthFace({ yaw: -0.35 }))!;
+    const right = v.face(synthFace({ yaw: -SEAT_YAW }))!;
     expect(right.yawDev).toBeCloseTo(-1, 1);
     expect(right.onTarget).toBe(false);
   });
 
-  it('살짝 움직이는 정도(보정 폭의 1/3)는 정면으로 본다', () => {
+  it('면접관 기준: 그 면접관을 보면 on-target, 렌즈나 옆 면접관을 보면 이탈', () => {
     const v = new VisionAnalyzer();
     calibrate(v);
-    expect(v.face(synthFace({ yaw: 0.1 }))!.onTarget).toBe(true);
-    expect(v.face(synthFace({ pitch: 0.1 }))!.onTarget).toBe(true);
+    v.setTarget('left');
+    expect(v.face(synthFace({ yaw: SEAT_YAW }))!.onTarget).toBe(true);
+    expect(Math.abs(v.face(synthFace({ yaw: SEAT_YAW }))!.yawDev)).toBeLessThan(0.1);
+    expect(v.face(synthFace({}))!.onTarget).toBe(false);
+    expect(v.face(synthFace({ yaw: -SEAT_YAW }))!.onTarget).toBe(false);
+    v.setTarget('right');
+    expect(v.face(synthFace({ yaw: -SEAT_YAW }))!.onTarget).toBe(true);
+    expect(v.face(synthFace({ yaw: SEAT_YAW }))!.onTarget).toBe(false);
+  });
+
+  it('기준점에서 살짝(1/3) 벗어난 정도는 그대로 본다', () => {
+    const v = new VisionAnalyzer();
+    calibrate(v);
+    v.setTarget('left');
+    expect(v.face(synthFace({ yaw: SEAT_YAW * 0.7 }))!.onTarget).toBe(true);
+    expect(v.face(synthFace({ yaw: SEAT_YAW, pitch: 0.1 }))!.onTarget).toBe(true);
   });
 
   it('아래를 보면 lookingDown', () => {
     const v = new VisionAnalyzer();
     calibrate(v);
-    const down = v.face(synthFace({ pitch: 0.4 }))!;
+    const down = v.face(synthFace({ pitch: DESK_PITCH }))!;
     expect(down.lookingDown).toBe(true);
     expect(down.onTarget).toBe(false);
-    // 위를 보는 것은 lookingDown 이 아니다
     const up = v.face(synthFace({ pitch: -0.3 }))!;
     expect(up.lookingDown).toBe(false);
   });
@@ -72,7 +87,7 @@ describe('시선: 보정과 판정의 부호가 맞는다', () => {
     const v = new VisionAnalyzer();
     calibrate(v);
     const eyes = v.face(synthFace({ eyeX: 1 }))!;
-    expect(Math.abs(eyes.yawDev)).toBeGreaterThan(0.45);
+    expect(Math.abs(eyes.yawDev)).toBeGreaterThan(0.6);
     expect(eyes.onTarget).toBe(false);
     const eyesDown = v.face(synthFace({ eyeY: -1 }))!;
     expect(eyesDown.lookingDown).toBe(true);
@@ -81,12 +96,12 @@ describe('시선: 보정과 판정의 부호가 맞는다', () => {
   it('눈 방향과 머리 방향이 같은 쪽이면 더 큰 이탈로 합산된다', () => {
     const v = new VisionAnalyzer();
     calibrate(v);
-    const headOnly = v.face(synthFace({ yaw: 0.2 }))!.yawDev;
-    const both = v.face(synthFace({ yaw: 0.2, eyeX: 0.6 }))!.yawDev;
+    const headOnly = v.face(synthFace({ yaw: 0.1 }))!.yawDev;
+    const both = v.face(synthFace({ yaw: 0.1, eyeX: 0.6 }))!.yawDev;
     expect(both).toBeGreaterThan(headOnly);
   });
 
-  it('보정 없이(기본값) 정면 얼굴은 on-target', () => {
+  it('보정 없이(기본값) 정면 얼굴은 렌즈 on-target', () => {
     const v = new VisionAnalyzer();
     expect(v.calibration).toEqual(DEFAULT_CALIBRATION);
     const s = v.face(synthFace({}))!;
@@ -94,12 +109,13 @@ describe('시선: 보정과 판정의 부호가 맞는다', () => {
     expect(s.lookingDown).toBe(false);
   });
 
-  it('랜드마크 잡음이 있어도 정면 판정이 흔들리지 않는다', () => {
+  it('랜드마크 잡음이 있어도 판정이 흔들리지 않는다', () => {
     const v = new VisionAnalyzer();
     calibrate(v, { noise: 0.002 });
+    v.setTarget('left');
     const rng = makeRng(99);
     let on = 0;
-    for (let i = 0; i < 60; i++) if (v.face(synthFace({ noise: 0.002 }, rng))!.onTarget) on++;
+    for (let i = 0; i < 60; i++) if (v.face(synthFace({ yaw: SEAT_YAW, noise: 0.002 }, rng))!.onTarget) on++;
     expect(on).toBeGreaterThan(54);
   });
 

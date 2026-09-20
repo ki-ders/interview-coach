@@ -81,8 +81,8 @@ export function InterviewRoom({ pair, states, speakingId, gazeOnTarget, running,
 }
 
 /** 사용자가 올린 면접장 배경 사진 (없으면 null) */
-function useBackdrop(): string | null {
-  const [src, setSrc] = useState<string | null>(getBackdrop);
+function useBackdrop(): string {
+  const [src, setSrc] = useState<string>(getBackdrop);
   useEffect(() => {
     const onChange = () => setSrc(getBackdrop());
     window.addEventListener(BACKDROP_CHANGED, onChange);
@@ -130,7 +130,7 @@ function GuideDot({
       // 눈높이: 사진은 얼굴 중심(44%)보다 조금 위(37%), 벡터 얼굴은 30% 근처
       const isPhoto = !!seat?.querySelector('.photoface[data-status="ready"]');
       x = r ? r.left + r.width / 2 : rootRect.left + rootRect.width / 2;
-      y = r ? r.top + r.height * (isPhoto ? 0.37 : 0.3) : rootRect.top + rootRect.height * 0.34;
+      y = r ? r.top + r.height * (isPhoto ? 0.4 : 0.3) : rootRect.top + rootRect.height * 0.34;
     }
     setPos({ left: x - rootRect.left, top: y - rootRect.top });
     // 렌즈는 카메라 그 자체이므로 (0,0) 기준을 쓰고, 면접관은 화면상 위치로 환산한다

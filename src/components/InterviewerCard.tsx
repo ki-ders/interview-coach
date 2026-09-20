@@ -86,7 +86,7 @@ export function InterviewerCard({ who, order, onToggle }: Props) {
           }}
         />
         <button type="button" className="btn btn--ghost pick__photoBtn" onClick={() => fileRef.current?.click()}>
-          {photoOk ? '사진 바꾸기' : '사진 넣기'}
+          사진 바꾸기
         </button>
         {custom && (
           <button

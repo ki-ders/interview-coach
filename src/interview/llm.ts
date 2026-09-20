@@ -25,6 +25,11 @@ export interface InterviewerLlm {
   summarize(answers: AnswerRecord[], interviewers: Interviewer[]): Promise<LlmSummary | null>;
   /** 키가 유효한지 확인 */
   test(): Promise<LlmTestResult>;
+  /**
+   * 답변 음성을 직접 듣고 받아 적는다 (브라우저 인식보다 정확). 지원하지 않거나 실패하면 null.
+   * hint 는 브라우저 인식 결과 — 고유명사 등을 맞추는 데 참고만 한다.
+   */
+  transcribe?(audio: Blob, mimeType: string, hint: string): Promise<string | null>;
   /** 마지막 실패 이유 (UI 안내용) */
   lastError: string | null;
 }

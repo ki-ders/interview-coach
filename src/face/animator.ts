@@ -10,9 +10,17 @@ export interface Pose extends DeformParams {
   cardTilt: number;
 }
 
-/** 상태·성향·립싱크 값을 받아 매 프레임 자연스러운 표정/고개 파라미터를 만든다 */
+/**
+ * 상태·성향·립싱크 값을 받아 매 프레임 자연스러운 표정/고개 파라미터를 만든다.
+ *
+ * 사진(2.5D)은 메시를 조금만 움직여도 "인상이 구겨진" 것처럼 보인다 — 특히 안경테·수염·미간처럼
+ * 딱딱하거나 결이 있는 곳. 그래서 표정(찌푸림·미소·눈썹)은 사진에 이미 담긴 것으로 보고 거의 건드리지
+ * 않고, 고개 움직임은 CSS 카드 기울임(cardTilt) 으로 대신하며, 입만 부드럽게 움직인다.
+ */
 export class FaceAnimator {
   private cur: Pose = { ...NEUTRAL, cardDy: 0, cardRot: 0, cardTilt: 0 };
+  /** 립싱크 값을 부드럽게 (급격한 펄스가 볼·턱을 튀게 한다) */
+  private lipSmooth = 0;
   private nextBlinkAt: number;
   private blinkStart = -1;
   private lastNodAt = 0;
@@ -33,13 +41,18 @@ export class FaceAnimator {
     target.roll = Math.sin(t * 0.29 + 0.7) * 0.012;
 
     switch (state) {
-      case 'speaking':
-        target.yaw *= 1.7;
-        target.pitch = Math.sin(t * 1.3) * 0.03 + lip * 0.02;
-        target.brow = 0.18;
-        target.jaw = lip;
+      case 'speaking': {
+        target.yaw *= 1.4;
+        // 음절마다 고개가 까딱이면 부자연스럽다 — 아주 약하게만
+        target.pitch = Math.sin(t * 1.3) * 0.02 + lip * 0.006;
+        target.brow = 0.05;
+        // 입: 빠르게 열리고 천천히 닫힌다. 최대 0.8 까지만 (그 이상은 턱이 늘어나 보인다)
+        const k = lip > this.lipSmooth ? 0.55 : 0.3;
+        this.lipSmooth += (Math.min(lip, 0.8) - this.lipSmooth) * k;
+        target.jaw = this.lipSmooth;
         target.cardDy = -1;
         break;
+      }
       case 'listening':
         target.roll += 0.06;
         target.pitch += 0.015;
@@ -58,30 +71,31 @@ export class FaceAnimator {
         break;
       }
       case 'writing':
-        target.pitch = 0.3 + Math.sin(t * 6) * 0.008;
-        target.yaw = 0.09 + Math.sin(t * 3.1) * 0.01;
-        target.roll = 0.03;
-        target.blinkL = 0.4;
-        target.blinkR = 0.4;
+        // 고개 숙임은 메시 회전(구겨짐)보다 카드 기울임으로 표현한다
+        target.pitch = 0.14 + Math.sin(t * 6) * 0.006;
+        target.yaw = 0.06 + Math.sin(t * 3.1) * 0.008;
+        target.roll = 0.02;
+        target.blinkL = 0.35;
+        target.blinkR = 0.35;
         target.cardDy = 7;
         target.cardRot = 1.2;
-        target.cardTilt = 9;
+        target.cardTilt = 12;
         break;
       default:
         break;
     }
 
-    // 성향에 따른 기본 표정
+    // 성향에 따른 기본 표정 — 사진에 이미 표정이 담겨 있으므로 아주 살짝만 얹는다
     if (mood === 'stern') {
-      target.frown += 0.55;
+      target.frown += 0.1;
       target.smile = 0;
-      target.brow -= 0.1;
+      target.brow -= 0.03;
     } else if (mood === 'warm') {
-      target.smile += state === 'speaking' ? 0.3 : 0.45;
-      target.brow += 0.08;
+      target.smile += state === 'speaking' ? 0.08 : 0.12;
+      target.brow += 0.03;
     } else {
-      target.frown += 0.12;
-      target.smile += 0.08;
+      target.frown += 0.03;
+      target.smile += 0.03;
     }
 
     // 깜빡임 (감기 60ms, 뜨기 90ms)
@@ -112,7 +126,7 @@ export class FaceAnimator {
     cur.cardDy = lerp(cur.cardDy, target.cardDy);
     cur.cardRot = lerp(cur.cardRot, target.cardRot);
     cur.cardTilt = lerp(cur.cardTilt, target.cardTilt);
-    cur.jaw = target.jaw;
+    cur.jaw = state === 'speaking' ? target.jaw : lerp(cur.jaw, 0);
     cur.blinkL = target.blinkL;
     cur.blinkR = target.blinkR;
     return cur;

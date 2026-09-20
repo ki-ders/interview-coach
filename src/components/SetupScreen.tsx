@@ -11,7 +11,6 @@ import {
   type LlmProvider,
   type LlmTestResult,
 } from '../interview/llm';
-import { PhotoGuide } from './PhotoGuide';
 import { BackdropPicker } from './BackdropPicker';
 import { VoicePicker } from './VoicePicker';
 
@@ -49,8 +48,21 @@ interface Prefs {
   blindMode: boolean;
   recordVideo: boolean;
   naturalVoice: boolean;
+  accurateStt: boolean;
+  blindName: string;
+  blindSchool: string;
+  blindExtra: string;
 }
-const DEFAULT_PREFS: Prefs = { gazeGuide: 'interviewer', blindMode: false, recordVideo: true, naturalVoice: true };
+const DEFAULT_PREFS: Prefs = {
+  gazeGuide: 'interviewer',
+  blindMode: false,
+  recordVideo: true,
+  naturalVoice: true,
+  accurateStt: true,
+  blindName: '',
+  blindSchool: '',
+  blindExtra: '',
+};
 function loadPrefs(): Prefs {
   try {
     const raw = localStorage.getItem(PREF_STORE);
@@ -62,6 +74,10 @@ function loadPrefs(): Prefs {
       blindMode: parsed.blindMode === true,
       recordVideo: parsed.recordVideo !== false,
       naturalVoice: parsed.naturalVoice !== false,
+      accurateStt: parsed.accurateStt !== false,
+      blindName: typeof parsed.blindName === 'string' ? parsed.blindName : '',
+      blindSchool: typeof parsed.blindSchool === 'string' ? parsed.blindSchool : '',
+      blindExtra: typeof parsed.blindExtra === 'string' ? parsed.blindExtra : '',
     };
   } catch {
     return DEFAULT_PREFS;
@@ -161,8 +177,17 @@ export function SetupScreen({ onStart }: Props) {
       apiKey: provider === 'none' ? '' : apiKey.trim(),
       gazeGuide: prefs.gazeGuide,
       blindMode: prefs.blindMode,
+      blindWatch: {
+        name: prefs.blindName.trim(),
+        school: prefs.blindSchool.trim(),
+        extra: prefs.blindExtra
+          .split(/[,，\n]/)
+          .map((s) => s.trim())
+          .filter((s) => s.length >= 2),
+      },
       recordVideo: prefs.recordVideo,
       naturalVoice: prefs.naturalVoice,
+      accurateStt: prefs.accurateStt,
     });
   };
 
@@ -190,9 +215,8 @@ export function SetupScreen({ onStart }: Props) {
             <InterviewerCard key={who.id} who={who} order={picked.indexOf(who.id)} onToggle={() => toggle(who.id)} />
           ))}
         </div>
-        <PhotoGuide />
         <p className="tiny faint" style={{ marginTop: 12, marginBottom: 0 }}>
-          등장 인물은 모두 가상이며 실존 인물과 관계가 없습니다. 사진을 넣을 때도 실존 인물 사진은 쓰지 마세요.
+          등장 인물은 모두 가상(AI 생성)이며 실존 인물과 관계가 없습니다. 사진을 바꿀 때도 실존 인물 사진은 쓰지 마세요.
         </p>
         <hr className="hr" />
         <VoicePicker picked={picked} />
@@ -360,6 +384,37 @@ export function SetupScreen({ onStart }: Props) {
             aria-label="블라인드 면접"
           />
         </div>
+        {prefs.blindMode && (
+          <div className="field blind-watch">
+            <div className="muted tiny" style={{ marginBottom: 8 }}>
+              <b>내 정보를 적어 두면 확실하게 잡습니다.</b> 이름 감지는 규칙(성씨+이름 꼴)과 AI 로도 하지만, 음성 인식이 이름을
+              엉뚱하게 적으면 놓칠 수 있습니다. 여기 적은 낱말은 답변에 나오는 즉시 부적격입니다. 이 브라우저에만 저장됩니다.
+            </div>
+            <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+              <input
+                className="input"
+                style={{ flex: 1, minWidth: 140 }}
+                placeholder="본인 성명 (예: 이현)"
+                value={prefs.blindName}
+                onChange={(e) => setPref('blindName', e.target.value)}
+              />
+              <input
+                className="input"
+                style={{ flex: 1, minWidth: 140 }}
+                placeholder="출신 학교 (예: 한성대)"
+                value={prefs.blindSchool}
+                onChange={(e) => setPref('blindSchool', e.target.value)}
+              />
+              <input
+                className="input"
+                style={{ flex: 2, minWidth: 200 }}
+                placeholder="그 밖의 식별어 (쉼표로 구분: 수상명, 회사명, 지역…)"
+                value={prefs.blindExtra}
+                onChange={(e) => setPref('blindExtra', e.target.value)}
+              />
+            </div>
+          </div>
+        )}
 
         <div className="switch-row">
           <div className="switch-row__body">
@@ -468,11 +523,32 @@ export function SetupScreen({ onStart }: Props) {
             />
           </div>
         )}
+
+        {provider === 'gemini' && (
+          <div className="switch-row">
+            <div className="switch-row__body">
+              <div className="switch-row__title">정확한 받아쓰기 (Gemini 가 직접 듣기)</div>
+              <div className="muted tiny">
+                답변이 끝나면 그 목소리를 Gemini 에 보내 다시 받아 적습니다. 브라우저 인식(80% 안팎)보다 훨씬 정확해서
+                이름·전문용어도 잘 잡고, 되묻기·꼬리질문·블라인드 판정이 모두 이 텍스트로 이뤄집니다. 답변마다 몇 초의
+                메모 시간이 더 걸립니다. 실시간 자막은 여전히 브라우저 인식입니다.
+              </div>
+            </div>
+            <button
+              type="button"
+              className={`switch${prefs.accurateStt ? ' switch--on' : ''}`}
+              onClick={() => setPref('accurateStt', !prefs.accurateStt)}
+              aria-pressed={prefs.accurateStt}
+              aria-label="정확한 받아쓰기"
+            />
+          </div>
+        )}
       </section>
 
       <div className="banner banner--info">
         <strong>이어폰을 꼭 써 주세요.</strong> 스피커로 들으면 면접관 목소리가 마이크로 되돌아와 받아쓰기에 섞이고,
-        답변이 끝났는지 판단이 흔들립니다. 이어폰(유선·무선 모두)이면 인식 정확도가 눈에 띄게 올라갑니다.
+        답변이 끝났는지 판단이 흔들립니다. <b>유선 이어폰</b>이 가장 정확합니다. 무선(블루투스) 이어폰은 마이크를 함께 쓰는 동안
+        소리가 0.3~1초 늦게 들릴 수 있어, 자막과 입 움직임을 소리에 맞춰 늦춰 보여 줍니다.
       </div>
 
       <div className="row" style={{ justifyContent: 'center' }}>

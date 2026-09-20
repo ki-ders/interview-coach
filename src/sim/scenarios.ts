@@ -32,8 +32,10 @@ const baseConfig = (questions: SessionConfig['questions'], over: Partial<Session
   apiKey: '',
   gazeGuide: 'interviewer',
   blindMode: false,
+  blindWatch: { name: '', school: '', extra: [] },
   recordVideo: true,
   naturalVoice: false,
+  accurateStt: false,
   ...over,
 });
 

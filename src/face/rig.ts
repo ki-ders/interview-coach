@@ -112,10 +112,10 @@ export function buildRig(
   const jawWeight = new Float32Array(n);
   for (let i = 0; i < n; i++) {
     const x = pts[i * 3], y = pts[i * 3 + 1];
-    // 입 봉합선 바로 아래부터 1, 위는 0
-    const fy = smoothstep(seamY - faceH * 0.004, seamY + faceH * 0.03, y);
-    // 입 너비의 1.3배 안쪽은 1, 턱선 끝으로 갈수록 0.25까지
-    const fx = 1 - 0.75 * smoothstep(mouthHalfW * 1.3, rx * 1.05, Math.abs(x - mouthCx));
+    // 입 봉합선 바로 아래부터 1, 위는 0. 턱 끝으로 갈수록 조금 줄여 턱이 늘어나 보이지 않게
+    const fy = smoothstep(seamY - faceH * 0.004, seamY + faceH * 0.03, y) * (1 - 0.35 * smoothstep(seamY + faceH * 0.12, seamY + faceH * 0.3, y));
+    // 입 너비 안쪽은 1, 볼 쪽으로 갈수록 빠르게 0 (볼이 같이 내려가면 인상이 구겨진다)
+    const fx = 1 - smoothstep(mouthHalfW * 1.05, rx * 0.8, Math.abs(x - mouthCx));
     jawWeight[i] = fy * fx;
   }
   for (const i of LM.upperLipOuter) jawWeight[i] = 0;
@@ -154,14 +154,14 @@ export function deform(rig: FaceRig, p: DeformParams, out: Float32Array): Float3
 
   // 사진에서 나온 z 는 얕아서 회전이 잘 안 보인다. 깊이를 키우고, 회전 방향으로
   // 얼굴 안쪽 특징이 미끄러지는 시차를 더해 2.5D 느낌을 강조한다.
-  const slideX = Math.sin(p.yaw) * faceW * 0.16;
-  const slideY = Math.sin(p.pitch) * faceH * 0.2;
+  const slideX = Math.sin(p.yaw) * faceW * 0.1;
+  const slideY = Math.sin(p.pitch) * faceH * 0.12;
 
   // 1) 머리 회전 (얼굴 가장자리로 갈수록 약하게)
   for (let i = 0; i < n; i++) {
     const x0 = pts[i * 3] - center.x;
     const y0 = pts[i * 3 + 1] - center.y;
-    const z0 = (pts[i * 3 + 2] - center.z) * 2.2;
+    const z0 = (pts[i * 3 + 2] - center.z) * 1.6;
 
     // yaw (세로축)
     let x = x0 * cy + z0 * sy;
@@ -180,15 +180,15 @@ export function deform(rig: FaceRig, p: DeformParams, out: Float32Array): Float3
     out[i * 2 + 1] = pts[i * 3 + 1] + (y - y0 + slideY) * w;
   }
 
-  // 2) 턱 벌림
+  // 2) 턱 벌림 — 입이 열리는 건 아랫입술이 내려가는 것으로 충분하다. 턱·볼까지 크게 끌면 구겨진다
   if (p.jaw > 0) {
-    const drop = p.jaw * faceH * 0.06;
+    const drop = p.jaw * faceH * 0.042;
     for (let i = 0; i < n; i++) {
       const w = jawWeight[i];
       if (w > 0) out[i * 2 + 1] += drop * w;
     }
-    // 입꼬리는 살짝 안쪽으로
-    const pull = p.jaw * faceW * 0.012;
+    // 입꼬리는 아주 살짝 안쪽으로
+    const pull = p.jaw * faceW * 0.006;
     out[LM.mouthRight * 2] += pull;
     out[LM.mouthLeft * 2] -= pull;
   }
@@ -215,8 +215,8 @@ export function deform(rig: FaceRig, p: DeformParams, out: Float32Array): Float3
     for (const i of LM.leftBrow) out[i * 2 + 1] += dy;
   }
   if (p.frown > 0) {
-    const dy = p.frown * faceH * 0.018;
-    const dx = p.frown * faceW * 0.008;
+    const dy = p.frown * faceH * 0.012;
+    const dx = p.frown * faceW * 0.005;
     for (const i of LM.browInner) {
       out[i * 2 + 1] += dy;
       // 미간 쪽으로 모은다

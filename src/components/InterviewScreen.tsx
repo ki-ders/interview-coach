@@ -14,26 +14,29 @@ interface Props {
   onAbort: () => void;
   onReset: () => void;
   showDebug: boolean;
-  /** 시선 안내 점이 화면 어디에 있는지 (0~1) — 분석기의 기준점을 옮기는 데 쓴다 */
-  onGuideMeasured?: (fx: number, fy: number) => void;
   /** 시선 기준 (설정값) */
   guideMode?: 'interviewer' | 'lens';
 }
 
 const ORDER: MetricKey[] = ['gaze', 'gesture', 'speech', 'voice', 'calm'];
+const CALIB_STEPS = ['noise', 'left', 'right', 'lens', 'down'];
 
 const CALIB_COPY: Record<string, { title: string; body: string }> = {
   noise: {
     title: '주변 소음을 측정합니다',
     body: '3초 동안 아무 말도 하지 말고 조용히 계세요. 이 값을 기준으로 목소리 크기를 판단합니다.',
   },
-  center: {
-    title: '카메라 렌즈를 바라보세요',
-    body: '화면이 아니라 카메라 렌즈를 3초간 응시해 주세요. 정면 기준을 잡습니다.',
+  left: {
+    title: '왼쪽 면접관의 눈(파란 점)을 보세요',
+    body: '평소 면접관을 볼 때처럼 자연스럽게 3초간 봐 주세요. 이 위치가 "왼쪽 면접관을 본다" 의 기준이 됩니다.',
   },
-  side: {
-    title: '화면 왼쪽 끝을 보세요',
-    body: '고개를 크게 돌리지 말고 시선만 왼쪽 끝 표시로 옮겨 주세요.',
+  right: {
+    title: '오른쪽 면접관의 눈(파란 점)을 보세요',
+    body: '같은 방식으로 3초간 봐 주세요.',
+  },
+  lens: {
+    title: '카메라 렌즈를 보세요',
+    body: '화면이 아니라 카메라 렌즈를 2초간 봐 주세요 (화상 면접 기준).',
   },
   down: {
     title: '책상(화면 아래쪽)을 보세요',
@@ -62,7 +65,6 @@ export function InterviewScreen({
   onAbort,
   onReset,
   showDebug,
-  onGuideMeasured,
   guideMode = 'lens',
 }: Props) {
   const [a, b] = interviewerIds.map(getInterviewer);
@@ -104,7 +106,6 @@ export function InterviewScreen({
               running={running}
               guideTarget={state.gazeGuideTarget}
               guideMode={guideMode}
-              onGuideMeasured={onGuideMeasured}
             />
 
             {state.subtitle ? (
@@ -219,26 +220,21 @@ export function InterviewScreen({
       )}
 
       {state.phase === 'calibrating' && (
-        <Overlay>
+        <div className="calib-bar">
           <CalibTarget step={state.calibStep} />
-          <div className="calib__steps">
-            {['noise', 'center', 'side', 'down'].map((s, i) => (
-              <span
-                key={s}
-                className={`calib__step${
-                  ['noise', 'center', 'side', 'down'].indexOf(state.calibStep) >= i
-                    ? ' calib__step--on'
-                    : ''
-                }`}
-              />
-            ))}
+          <div className="calib__ring calib__ring--sm">{state.calibCountdown}</div>
+          <div className="calib-bar__text">
+            <div className="calib__steps" style={{ marginBottom: 6 }}>
+              {CALIB_STEPS.map((s, i) => (
+                <span key={s} className={`calib__step${CALIB_STEPS.indexOf(state.calibStep) >= i ? ' calib__step--on' : ''}`} />
+              ))}
+            </div>
+            <h2 style={{ fontSize: 17 }}>{CALIB_COPY[state.calibStep]?.title ?? '보정 중'}</h2>
+            <p className="muted tiny" style={{ margin: '4px 0 0' }}>
+              {CALIB_COPY[state.calibStep]?.body ?? ''}
+            </p>
           </div>
-          <div className="calib__ring">{state.calibCountdown}</div>
-          <h2>{CALIB_COPY[state.calibStep]?.title ?? '보정 중'}</h2>
-          <p className="muted" style={{ maxWidth: 420 }}>
-            {CALIB_COPY[state.calibStep]?.body ?? ''}
-          </p>
-        </Overlay>
+        </div>
       )}
 
       {state.phase === 'ready' && (
@@ -257,7 +253,7 @@ export function InterviewScreen({
             <li>면접관이 질문을 마치면 바로 답변하세요.</li>
             <li>말을 멈추면 {'약 2~3초'} 뒤 다음 질문으로 넘어갑니다.</li>
             <li>
-              <b style={{ color: 'var(--accent)' }}>이어폰을 쓰세요.</b> 스피커면 면접관 목소리가 마이크로 되돌아와 받아쓰기에 섞입니다.
+              <b style={{ color: 'var(--accent)' }}>이어폰을 쓰세요.</b> 스피커면 면접관 목소리가 마이크로 되돌아와 받아쓰기에 섞입니다. 유선이 가장 정확하고, 무선은 소리가 살짝 늦게 들릴 수 있습니다.
             </li>
           </ul>
           <div className="row">
@@ -308,14 +304,8 @@ function Overlay({ children }: { children: React.ReactNode }) {
   );
 }
 
-/** 보정 단계마다 응시할 지점을 화면에 표시한다 */
+/** 아래(책상) 단계의 응시 지점. 면접관·렌즈 단계는 방 안의 안내 점이 맡는다 */
 function CalibTarget({ step }: { step: string }) {
-  if (step === 'noise' || step === 'done') return null;
-  const pos =
-    step === 'center'
-      ? { top: 8, left: '50%', transform: 'translateX(-50%)' }
-      : step === 'side'
-        ? { top: '50%', left: 10, transform: 'translateY(-50%)' }
-        : { bottom: 10, left: '50%', transform: 'translateX(-50%)' };
-  return <div className="calib__target" style={{ position: 'fixed', ...pos }} />;
+  if (step !== 'down') return null;
+  return <div className="calib__target" style={{ position: 'fixed', bottom: 10, left: '50%', transform: 'translateX(-50%)' }} />;
 }

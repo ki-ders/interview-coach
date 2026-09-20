@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { blindWarningLine, detectBlindViolations } from './blind';
+import { blindWarningLine, detectBlindViolations, detectWatchlist } from './blind';
 
 const cats = (t: string) => detectBlindViolations(t).map((v) => v.category);
 
@@ -14,6 +14,25 @@ describe('블라인드 면접 위반 감지', () => {
     expect(cats('전 최유진이에요')).toContain('name');
     expect(cats('지원자 정우성입니다')).toContain('name');
     expect(cats('이름을 말씀드리면 김민수라고 합니다')).toContain('name');
+    // 두 글자 이름
+    expect(cats('저는 이현입니다')).toContain('name');
+    expect(cats('안녕하세요 김수입니다')).toContain('name');
+    expect(cats('이현이라고 합니다')).toContain('name');
+  });
+
+  it('두 글자 낱말은 이름으로 보지 않는다', () => {
+    for (const t of ['저는 신입입니다', '저는 경력입니다', '저는 문과입니다', '저는 학생입니다', '저는 성실입니다', '저는 인턴입니다', '저는 한국입니다', '저는 지원입니다']) {
+      expect(cats(t), t).not.toContain('name');
+    }
+  });
+
+  it('직접 등록한 식별어는 띄어쓰기가 달라도 잡는다', () => {
+    const watch = { name: '이현', school: '한성대', extra: ['교내 해커톤'] };
+    expect(detectWatchlist('저는 이 현 입니다', watch).map((v) => v.category)).toContain('name');
+    expect(detectWatchlist('한성대를 졸업했습니다', watch).map((v) => v.category)).toContain('school');
+    expect(detectWatchlist('교내해커톤에서 우승했습니다', watch).map((v) => v.category)).toContain('award');
+    expect(detectWatchlist('데이터 분석을 전공했습니다', watch)).toEqual([]);
+    expect(detectWatchlist('저는 이현입니다', undefined)).toEqual([]);
   });
 
   it('성씨로 시작하는 보통 낱말은 이름으로 보지 않는다', () => {

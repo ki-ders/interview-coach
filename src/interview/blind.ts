@@ -52,6 +52,21 @@ function excerptAround(text: string, hit: string): string {
 
 /** 성씨 + 두 글자 이름 (음성 인식이 "김 민수" 처럼 띄어 적는 경우도 잡는다) */
 const NAME = `[${SURNAMES}]\\s?[가-힣]{2}`;
+/** 성씨 + 한 글자 이름 ("이현", "김수") — 흔한 두 글자 낱말과 겹치므로 "저는 ○○입니다" 꼴에서만 본다 */
+const NAME2 = `[${SURNAMES}][가-힣]`;
+const NOT_NAMES2 = new Set([
+  '신입', '경력', '학생', '남자', '여자', '문과', '이과', '이런', '지원', '인턴', '사원', '대리', '주부', '강사', '기자',
+  '배우', '고졸', '조장', '반장', '임원', '원장', '유일', '성인', '장남', '장녀', '차남', '차녀', '백수', '한국', '한명',
+  '신자', '전공', '전문', '최고', '최선', '정직', '진심', '노인', '소년', '소녀', '남편', '위원', '명문', '국민', '인간',
+  '인재', '이상', '이유', '유학', '유능', '성실', '문제', '조용', '신중', '안정', '편안', '용감', '주인', '주장', '주니어',
+  '장인', '장수', '한국', '한번', '한때', '한참', '하나', '하루', '하필', '고객', '고민', '고교', '조금', '조카', '신입',
+  '오늘', '오빠', '유아', '유명', '남성', '여성', '서울', '안산', '안양', '천안', '전주', '진주', '구미', '마산', '김해',
+  '기본', '기술', '기획', '기존', '전자', '전체', '정상', '정확', '현재', '현실', '함께', '변화', '염려', '양심', '추가',
+  '도전', '소통', '석사', '박사', '선배', '설계', '마음', '연구', '위치', '표준', '명확', '반대', '왕자', '금융', '옥상',
+  '육아', '인사', '맹인', '제조', '모집', '탁구', '국어', '은행', '편집', '용기', '임시', '채용', '원래', '천천', '방금',
+  '공무', '공대', '공학', '허리', '노력', '엄마', '나이', '지금', '지역', '진짜', '채식', '소개', '석유', '길이', '연습',
+  '위해', '표현', '명절', '반응', '왕복', '금방', '옥타', '육체', '인정', '제일', '모두', '국가', '은퇴', '편의', '용도',
+]);
 
 function nameMention(text: string): string | null {
   // "제 이름은 ○○○", "이름은 ○○○"
@@ -74,7 +89,39 @@ function nameMention(text: string): string | null {
     const name = m.slice(1).find((g) => g && new RegExp(`^${NAME}$`).test(g))?.replace(/\s/g, '');
     if (name && !NOT_NAMES.has(name) && name.length >= 2) return m[0].trim();
   }
+  // 두 글자 이름: "저는 이현입니다" / "이현이라고 합니다" / "안녕하세요 이현입니다"
+  const short = text.match(new RegExp(`(?:저는|전|안녕하세요[,.]?|반갑습니다[,.]?|지원자)\\s*(${NAME2})\\s*(입니다|이라고|이에요|예요|이고|이며)`));
+  if (short && !NOT_NAMES2.has(short[1])) return short[0].trim();
+  const short2 = text.match(new RegExp(`(?<![가-힣])(${NAME2})\\s*(이라고|라고)\\s*(합니다|해요)`));
+  if (short2 && !NOT_NAMES2.has(short2[1])) return short2[0].trim();
   return null;
+}
+
+/**
+ * 사용자가 직접 적어 둔 개인 식별어(본인 성명·출신 학교·그 밖의 낱말)가 답변에 나오는지.
+ * 음성 인식이 띄어쓰기를 넣어도 잡히도록 공백을 무시하고 비교한다.
+ */
+export function detectWatchlist(
+  text: string,
+  watch: { name: string; school: string; extra: string[] } | undefined,
+  questionIndex = 0,
+): BlindViolation[] {
+  if (!watch) return [];
+  const flat = text.replace(/\s+/g, '');
+  const out: BlindViolation[] = [];
+  const check = (word: string, category: BlindCategory) => {
+    const w = word.replace(/\s+/g, '').trim();
+    if (w.length < 2) return;
+    const i = flat.indexOf(w);
+    if (i < 0) return;
+    out.push({ category, label: BLIND_LABEL[category], excerpt: `"${w}" (직접 등록한 낱말)`, questionIndex });
+  };
+  check(watch.name, 'name');
+  // 성만 빼고 이름만 말해도 잡는다 ("현입니다" 는 너무 짧으니 두 글자 이상일 때만)
+  if (watch.name.replace(/\s+/g, '').length >= 3) check(watch.name.replace(/\s+/g, '').slice(1), 'name');
+  check(watch.school, 'school');
+  for (const e of watch.extra) check(e, 'award');
+  return out;
 }
 
 function schoolMention(text: string): string | null {

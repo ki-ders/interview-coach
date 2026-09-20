@@ -84,9 +84,24 @@ function clampMs(v: number) {
 }
 
 export interface SpeakHandle {
+  /** 소리가 실제로 나기 시작하면 resolve (자막·입 움직임을 소리에 맞추는 데 쓴다). 취소돼도 resolve */
+  started: Promise<void>;
   /** 낭독이 끝나거나 취소되면 resolve. 절대 reject 하지 않는다. */
   done: Promise<void>;
   cancel(): void;
+}
+
+/** started/done 한 쌍을 만든다 */
+function gates() {
+  let markStarted: () => void = () => {};
+  let markDone: () => void = () => {};
+  const started = new Promise<void>((r) => {
+    markStarted = r;
+  });
+  const done = new Promise<void>((r) => {
+    markDone = r;
+  });
+  return { started, done, markStarted, markDone };
 }
 
 export class Tts {
@@ -139,10 +154,7 @@ export class Tts {
     const ctx = this.ctx;
     if (!gemini || !ctx || !gemini.available) return null;
 
-    let settle: () => void = () => {};
-    const done = new Promise<void>((resolve) => {
-      settle = resolve;
-    });
+    const g = gates();
     let settled = false;
     let cancelled = false;
     let timer = 0;
@@ -153,7 +165,8 @@ export class Tts {
       this.playing = null;
       this.speaking = false;
       lipSync.end();
-      settle();
+      g.markStarted();
+      g.markDone();
     };
     // 합성을 기다리는 동안도 "말하는 중" 으로 두어 마이크가 열리지 않게 한다
     this.speaking = true;
@@ -174,6 +187,7 @@ export class Tts {
         }
         const fallback = this.speakDevice(text, who);
         fallbackHandle = fallback;
+        void fallback.started.then(() => g.markStarted());
         await fallback.done;
         return finish();
       }
@@ -183,14 +197,21 @@ export class Tts {
       src.connect(ctx.destination);
       src.onended = finish;
       this.playing = src;
-      lipSync.beginEnvelope(result.envelope, result.envelopeStepMs);
+      // 출력 지연(블루투스 이어폰은 수백 ms)만큼 입·자막을 늦춰 소리와 맞춘다
+      const latencyMs = Math.min(600, Math.max(0, ((ctx.outputLatency || 0) + ctx.baseLatency) * 1000));
+      window.setTimeout(() => {
+        if (settled) return;
+        lipSync.beginEnvelope(result.envelope, result.envelopeStepMs);
+        g.markStarted();
+      }, latencyMs);
       src.start();
       timer = window.setTimeout(finish, result.buffer.duration * 1000 + 1500);
     });
 
     let fallbackHandle: SpeakHandle | null = null;
     return {
-      done,
+      started: g.started,
+      done: g.done,
       cancel: () => {
         cancelled = true;
         fallbackHandle?.cancel();
@@ -222,11 +243,8 @@ export class Tts {
 
   /** 기기 내장 음성(Web Speech) */
   private speakDevice(text: string, who: Interviewer): SpeakHandle {
-    let settle: () => void = () => {};
-    const done = new Promise<void>((resolve) => {
-      settle = resolve;
-    });
-
+    const g = gates();
+    const done = g.done;
     let settled = false;
     let timer = 0;
     const finish = () => {
@@ -235,15 +253,18 @@ export class Tts {
       window.clearTimeout(timer);
       this.speaking = false;
       lipSync.end();
-      settle();
+      g.markStarted();
+      g.markDone();
     };
 
     // TTS 를 못 쓰면 글자 수에 비례한 시간만 흘려보낸다 (자막으로 진행)
     if (!this.available || !this.enabled || !text.trim()) {
       this.speaking = true;
       lipSync.begin(text);
+      g.markStarted();
       timer = window.setTimeout(finish, clampMs(text.length * 95));
       return {
+        started: g.started,
         done,
         cancel: () => {
           finish();
@@ -269,6 +290,7 @@ export class Tts {
     utter.onstart = () => {
       this.speaking = true;
       lipSync.begin(text);
+      g.markStarted();
     };
     utter.onboundary = (e) => {
       lipSync.boundary(e.charIndex);
@@ -280,8 +302,11 @@ export class Tts {
     speechSynthesis.speak(utter);
     // 일부 브라우저에서 onend 가 오지 않는 문제에 대한 안전망
     timer = window.setTimeout(finish, clampMs(text.length * 170) + 4000);
+    // onstart 가 안 오는 브라우저 안전망: 1.5초 뒤에는 시작한 것으로 본다
+    window.setTimeout(() => g.markStarted(), 1500);
 
     return {
+      started: g.started,
       done,
       cancel: () => {
         speechSynthesis.cancel();

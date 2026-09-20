@@ -8,6 +8,12 @@ const CHIN = 152;
 const BROW_MID = 9; // 미간
 const EYE_CORNER_A = 33; // 한쪽 눈 바깥 끝
 const EYE_CORNER_B = 263; // 반대쪽 눈 바깥 끝
+/** 두 눈의 윤곽(바깥·안쪽 끝, 위·아래 눈꺼풀)과 홍채 중심 후보 (refined landmarks 468~477) */
+const EYES = [
+  { outer: 33, inner: 133, top: 159, bottom: 145 },
+  { outer: 263, inner: 362, top: 386, bottom: 374 },
+] as const;
+const IRIS_CENTERS = [468, 473] as const;
 
 /* 포즈 랜드마크 인덱스 (BlazePose 33) */
 const P = {
@@ -30,29 +36,39 @@ const SAMPLE_HZ = 30;
  */
 const periodicityConfidence = (p: number) => clamp((p - 0.25) / 0.55, 0, 1);
 
+/** 바라볼 수 있는 기준점. 보정 때 각 지점을 실제로 보게 해서 원시값을 기억한다 */
+export type GazeTargetId = 'lens' | 'left' | 'right';
+
 export interface GazeCalibration {
-  /** 정면 응시 시의 원시 좌우/상하 값 */
-  centerX: number;
-  centerY: number;
-  /** 화면 가장자리를 볼 때의 원시값 차이 (부호 포함) */
-  spanX: number;
-  /** 아래쪽을 볼 때의 원시값 차이 (부호 포함, 보통 음수) */
-  spanY: number;
+  /** 기준점별 원시 시선 값 (보정에서 잰 중앙값) */
+  points: Record<GazeTargetId | 'down', { x: number; y: number }>;
   calibrated: boolean;
 }
 
+/**
+ * 보정을 못 했을 때의 기본값. 렌즈가 화면 위 가운데, 면접관 눈이 그 아래 좌우, 책상이 맨 아래라는
+ * 전형적인 배치에서 흔히 나오는 원시값이다.
+ */
 export const DEFAULT_CALIBRATION: GazeCalibration = {
-  centerX: 0,
-  centerY: 0.85,
-  spanX: 0.55,
-  spanY: -0.45,
+  points: {
+    lens: { x: 0, y: 0.85 },
+    left: { x: -0.28, y: 0.72 },
+    right: { x: 0.28, y: 0.72 },
+    down: { x: 0, y: 0.4 },
+  },
   calibrated: false,
 };
 
-/** 정면 대비 이 비율 이상 벗어나면 시선 이탈 (1.0 = 화면 가장자리) */
-const OFF_TARGET_X = 0.45;
-const OFF_TARGET_Y = 0.5;
+/**
+ * 기준점에서 이만큼 벗어나면 시선 이탈. 단위: 좌우는 "두 면접관 사이 거리의 절반", 상하는 "렌즈~책상".
+ * 0.6 이면 옆 면접관 쪽으로 30% 쯤 옮겨 간 정도까지는 그 사람을 보는 것으로 친다.
+ */
+const OFF_TARGET_X = 0.6;
+const OFF_TARGET_Y = 0.6;
 const LOOK_DOWN_Y = 0.55;
+/** 원시값 단위 최소 스팬 (보정이 이상하게 잡혀도 나눗셈이 폭주하지 않게) */
+const MIN_SPAN_X = 0.1;
+const MIN_SPAN_Y = 0.12;
 
 interface RawGaze {
   x: number;
@@ -104,10 +120,46 @@ function rawGaze(result: FaceLandmarkerResult): RawGaze | null {
     (blend(result, 'eyeLookUpLeft') + blend(result, 'eyeLookUpRight')) / 2 -
     (blend(result, 'eyeLookDownLeft') + blend(result, 'eyeLookDownRight')) / 2;
 
+  // 홍채 위치 — 눈 안에서 홍채가 어느 쪽에 있는지 (블렌드셰이프보다 직접적이고 정밀하다)
+  const iris = irisOffset(lm);
+
   return {
-    x: headX + eyeX * 0.55,
-    y: headY * 0.5 + eyeY * 0.55,
+    x: headX + eyeX * 0.4 + (iris ? iris.x * 2.4 : 0),
+    y: headY * 0.5 + eyeY * 0.4 - (iris ? iris.y * 1.2 : 0),
   };
+}
+
+/**
+ * 두 눈의 홍채 중심이 눈 윤곽 안에서 어디에 있는지 (-0.5~0.5, x 양수 = 이미지 오른쪽, y 양수 = 아래).
+ * 홍채 랜드마크가 없는(정제 안 된) 모델이면 null.
+ */
+function irisOffset(lm: { x: number; y: number }[]): { x: number; y: number } | null {
+  if (lm.length < 478) return null;
+  const irises = IRIS_CENTERS.map((i) => lm[i]).filter(Boolean);
+  if (irises.length < 2) return null;
+  let sx = 0;
+  let sy = 0;
+  let n = 0;
+  for (const e of EYES) {
+    const a = lm[e.outer];
+    const b = lm[e.inner];
+    const t = lm[e.top];
+    const bt = lm[e.bottom];
+    if (!a || !b || !t || !bt) continue;
+    const cx = (a.x + b.x) / 2;
+    const cy = (t.y + bt.y) / 2;
+    // 이 눈에 더 가까운 홍채 중심을 고른다 (좌우 명명 혼동 방지)
+    const iris = irises.reduce((best, c) => (Math.hypot(c.x - cx, c.y - cy) < Math.hypot(best.x - cx, best.y - cy) ? c : best));
+    const w = Math.abs(a.x - b.x);
+    const h = Math.abs(bt.y - t.y);
+    if (w < 1e-4) continue;
+    sx += (iris.x - cx) / w;
+    // 눈을 감을수록 h 가 0 에 가까워져 폭주하므로 눈 폭 기준으로 정규화한다
+    sy += (iris.y - cy) / Math.max(h, w * 0.25);
+    n++;
+  }
+  if (!n) return null;
+  return { x: sx / n, y: (sy / n) * 0.5 };
 }
 
 function isBlinking(result: FaceLandmarkerResult): boolean {
@@ -156,11 +208,8 @@ export interface VisionDebug {
 
 export class VisionAnalyzer {
   calibration: GazeCalibration = { ...DEFAULT_CALIBRATION };
-  /**
-   * 지금 바라봐야 할 지점 (보정 좌표: 0 = 정면/렌즈, 좌우 ±1 = 화면 가장자리, 아래 1 = 화면 아래).
-   * 시선 안내 모드에서는 면접관 얼굴로 옮겨 다니고, 고정 모드에서는 늘 렌즈다.
-   */
-  private target = { x: 0, y: 0 };
+  /** 지금 바라봐야 할 기준점. 면접관 눈 모드에서는 left/right 를 오가고, 렌즈 모드에서는 늘 lens */
+  private target: GazeTargetId = 'lens';
 
   private prevShoulderMid: { x: number; y: number } | null = null;
   private prevWrists: { lx: number; ly: number; rx: number; ry: number } | null = null;
@@ -199,7 +248,7 @@ export class VisionAnalyzer {
   };
 
   reset() {
-    this.target = { x: 0, y: 0 };
+    this.target = 'lens';
     this.prevShoulderMid = null;
     this.prevWrists = null;
     this.prevPoseT = 0;
@@ -221,17 +270,13 @@ export class VisionAnalyzer {
     this.debug.fps = this.fpsEma.get();
   }
 
-  /**
-   * 화면상의 위치(0~1, 왼쪽 위가 원점)를 바라볼 지점으로 삼는다.
-   * 보정에서 "화면 왼쪽 끝" 을 봤을 때의 부호로 좌우 방향을 맞춘다.
-   */
-  setTargetScreen(fx: number, fy: number) {
-    const leftSign = this.calibration.spanX < 0 ? -1 : 1;
-    this.target = { x: leftSign * (0.5 - fx) * 2, y: Math.max(0, fy) };
+  /** 바라볼 기준점을 바꾼다 */
+  setTarget(id: GazeTargetId) {
+    this.target = id;
   }
 
   resetTarget() {
-    this.target = { x: 0, y: 0 };
+    this.target = 'lens';
   }
 
   face(result: FaceLandmarkerResult | null): FaceSample | null {
@@ -239,22 +284,22 @@ export class VisionAnalyzer {
     const raw = rawGaze(result);
     if (!raw) return null;
 
-    const { centerX, centerY, spanX, spanY } = this.calibration;
-    const sx = Math.abs(spanX) < 0.08 ? Math.abs(DEFAULT_CALIBRATION.spanX) : Math.abs(spanX);
-    const sy = Math.abs(spanY) < 0.08 ? Math.abs(DEFAULT_CALIBRATION.spanY) : Math.abs(spanY);
+    const { points } = this.calibration;
+    // 좌우 단위: 두 면접관 사이 거리의 절반. 상하 단위: 렌즈에서 책상까지
+    const halfSpan = Math.max(Math.abs(points.right.x - points.left.x) / 2, MIN_SPAN_X);
+    const vSpan = Math.max(Math.abs(points.lens.y - points.down.y), MIN_SPAN_Y);
+    const downSign = points.down.y <= points.lens.y ? -1 : 1;
 
-    // 정면 = 0, 화면 가장자리 = ±1
-    const gx = clamp((raw.x - centerX) / sx, -3, 3);
-    // 보정 3단계에서 "아래"를 보게 하므로 spanY 방향이 곧 아래쪽이다
-    const downSign = spanY <= 0 ? -1 : 1;
-    const gDown = clamp(((raw.y - centerY) / sy) * downSign, -3, 3);
-
+    // 렌즈 기준 좌표 (디버그·"아래 봄" 판정용): 0 = 렌즈, 아래 1 = 책상
+    const gx = clamp((raw.x - points.lens.x) / halfSpan, -4, 4);
+    const gDown = clamp(((raw.y - points.lens.y) / vSpan) * downSign, -4, 4);
     this.debug.gazeX = gx;
     this.debug.gazeDown = gDown;
 
-    // 편차는 "지금 봐야 할 지점" 기준이다 — 안내 점을 잘 따라가면 0 근처에 머문다
-    const dx = gx - this.target.x;
-    const dy = gDown - this.target.y;
+    // 편차는 "지금 봐야 할 기준점" 기준이다 — 그 면접관 눈을 보고 있으면 0 근처에 머문다
+    const t = points[this.target];
+    const dx = clamp((raw.x - t.x) / halfSpan, -4, 4);
+    const dy = clamp(((raw.y - t.y) / vSpan) * downSign, -4, 4);
     return {
       yawDev: dx,
       pitchDev: -dy,

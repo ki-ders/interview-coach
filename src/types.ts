@@ -195,8 +195,12 @@ export interface SessionConfig {
   gazeGuide: 'interviewer' | 'lens';
   /** 블라인드 면접: 성명·출신 학교·가족·수상·수험번호를 말하면 부적격 */
   blindMode: boolean;
+  /** 블라인드 감시 목록: 본인 성명·출신 학교 등 실제 개인 식별어 (이게 나오면 확실히 잡는다) */
+  blindWatch: { name: string; school: string; extra: string[] };
   /** 면접 영상을 녹화해 끝나고 파일로 준다 (기기 밖으로 나가지 않는다) */
   recordVideo: boolean;
   /** Gemini 음성으로 면접관이 말한다 (Gemini 키가 있을 때만 의미 있음). 실패하면 기기 음성 */
   naturalVoice: boolean;
+  /** 답변 음성을 두뇌(Gemini)가 직접 듣고 받아 적는다 — 브라우저 인식보다 정확. 실패하면 브라우저 결과 */
+  accurateStt: boolean;
 }
