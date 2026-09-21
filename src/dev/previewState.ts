@@ -49,5 +49,6 @@ export function makePreviewState(): SessionState {
     blindViolations: [],
     mannerHits: [],
     video: null,
+    postureHints: [],
   };
 }

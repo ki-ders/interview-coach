@@ -26,6 +26,13 @@ function calibrate(v: VisionAnalyzer, opts: { noise?: number } = {}) {
   return v.calibration;
 }
 
+/** 실제처럼 여러 프레임을 흘려 스무딩이 수렴한 뒤의 판정을 본다 */
+function look(v: VisionAnalyzer, params: Parameters<typeof synthFace>[0]) {
+  let last = null;
+  for (let i = 0; i < 20; i++) last = v.face(synthFace(params));
+  return last!;
+}
+
 describe('시선: 기준점 보정과 판정', () => {
   it('보정값: 왼쪽 면접관은 +x, 오른쪽은 -x, 아래는 -y 로 잡힌다', () => {
     const v = new VisionAnalyzer();
@@ -39,15 +46,15 @@ describe('시선: 기준점 보정과 판정', () => {
     const v = new VisionAnalyzer();
     calibrate(v);
     v.setTarget('lens');
-    const front = v.face(synthFace({}))!;
+    const front = look(v, {});
     expect(front.onTarget).toBe(true);
     expect(Math.abs(front.yawDev)).toBeLessThan(0.1);
     expect(front.lookingDown).toBe(false);
 
-    const left = v.face(synthFace({ yaw: SEAT_YAW }))!;
+    const left = look(v, { yaw: SEAT_YAW });
     expect(left.yawDev).toBeCloseTo(1, 1);
     expect(left.onTarget).toBe(false);
-    const right = v.face(synthFace({ yaw: -SEAT_YAW }))!;
+    const right = look(v, { yaw: -SEAT_YAW });
     expect(right.yawDev).toBeCloseTo(-1, 1);
     expect(right.onTarget).toBe(false);
   });
@@ -56,55 +63,55 @@ describe('시선: 기준점 보정과 판정', () => {
     const v = new VisionAnalyzer();
     calibrate(v);
     v.setTarget('left');
-    expect(v.face(synthFace({ yaw: SEAT_YAW }))!.onTarget).toBe(true);
-    expect(Math.abs(v.face(synthFace({ yaw: SEAT_YAW }))!.yawDev)).toBeLessThan(0.1);
-    expect(v.face(synthFace({}))!.onTarget).toBe(false);
-    expect(v.face(synthFace({ yaw: -SEAT_YAW }))!.onTarget).toBe(false);
+    expect(look(v, { yaw: SEAT_YAW }).onTarget).toBe(true);
+    expect(Math.abs(look(v, { yaw: SEAT_YAW }).yawDev)).toBeLessThan(0.1);
+    expect(look(v, {}).onTarget).toBe(false);
+    expect(look(v, { yaw: -SEAT_YAW }).onTarget).toBe(false);
     v.setTarget('right');
-    expect(v.face(synthFace({ yaw: -SEAT_YAW }))!.onTarget).toBe(true);
-    expect(v.face(synthFace({ yaw: SEAT_YAW }))!.onTarget).toBe(false);
+    expect(look(v, { yaw: -SEAT_YAW }).onTarget).toBe(true);
+    expect(look(v, { yaw: SEAT_YAW }).onTarget).toBe(false);
   });
 
   it('기준점에서 살짝(1/3) 벗어난 정도는 그대로 본다', () => {
     const v = new VisionAnalyzer();
     calibrate(v);
     v.setTarget('left');
-    expect(v.face(synthFace({ yaw: SEAT_YAW * 0.7 }))!.onTarget).toBe(true);
-    expect(v.face(synthFace({ yaw: SEAT_YAW, pitch: 0.1 }))!.onTarget).toBe(true);
+    expect(look(v, { yaw: SEAT_YAW * 0.7 }).onTarget).toBe(true);
+    expect(look(v, { yaw: SEAT_YAW, pitch: 0.1 }).onTarget).toBe(true);
   });
 
   it('아래를 보면 lookingDown', () => {
     const v = new VisionAnalyzer();
     calibrate(v);
-    const down = v.face(synthFace({ pitch: DESK_PITCH }))!;
+    const down = look(v, { pitch: DESK_PITCH });
     expect(down.lookingDown).toBe(true);
     expect(down.onTarget).toBe(false);
-    const up = v.face(synthFace({ pitch: -0.3 }))!;
+    const up = look(v, { pitch: -0.3 });
     expect(up.lookingDown).toBe(false);
   });
 
   it('머리는 정면인데 눈만 옆으로 돌려도 이탈로 잡는다', () => {
     const v = new VisionAnalyzer();
     calibrate(v);
-    const eyes = v.face(synthFace({ eyeX: 1 }))!;
+    const eyes = look(v, { eyeX: 1 });
     expect(Math.abs(eyes.yawDev)).toBeGreaterThan(0.6);
     expect(eyes.onTarget).toBe(false);
-    const eyesDown = v.face(synthFace({ eyeY: -1 }))!;
+    const eyesDown = look(v, { eyeY: -1 });
     expect(eyesDown.lookingDown).toBe(true);
   });
 
   it('눈 방향과 머리 방향이 같은 쪽이면 더 큰 이탈로 합산된다', () => {
     const v = new VisionAnalyzer();
     calibrate(v);
-    const headOnly = v.face(synthFace({ yaw: 0.1 }))!.yawDev;
-    const both = v.face(synthFace({ yaw: 0.1, eyeX: 0.6 }))!.yawDev;
+    const headOnly = look(v, { yaw: 0.1 }).yawDev;
+    const both = look(v, { yaw: 0.1, eyeX: 0.6 }).yawDev;
     expect(both).toBeGreaterThan(headOnly);
   });
 
   it('보정 없이(기본값) 정면 얼굴은 렌즈 on-target', () => {
     const v = new VisionAnalyzer();
     expect(v.calibration).toEqual(DEFAULT_CALIBRATION);
-    const s = v.face(synthFace({}))!;
+    const s = look(v, {});
     expect(s.onTarget).toBe(true);
     expect(s.lookingDown).toBe(false);
   });
@@ -121,8 +128,8 @@ describe('시선: 기준점 보정과 판정', () => {
 
   it('깜빡임은 블렌드셰이프로', () => {
     const v = new VisionAnalyzer();
-    expect(v.face(synthFace({ blink: 0.7 }))!.blink).toBe(true);
-    expect(v.face(synthFace({ blink: 0.1 }))!.blink).toBe(false);
+    expect(look(v, { blink: 0.7 }).blink).toBe(true);
+    expect(look(v, { blink: 0.1 }).blink).toBe(false);
   });
 
   it('얼굴이 없으면 null', () => {

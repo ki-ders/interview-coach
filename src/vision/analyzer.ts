@@ -173,6 +173,7 @@ export class CalibrationCollector {
 
   add(result: FaceLandmarkerResult | null) {
     if (!result) return;
+    if (isBlinking(result)) return;
     const g = rawGaze(result);
     if (!g) return;
     this.xs.push(g.x);
@@ -210,6 +211,13 @@ export class VisionAnalyzer {
   calibration: GazeCalibration = { ...DEFAULT_CALIBRATION };
   /** 지금 바라봐야 할 기준점. 면접관 눈 모드에서는 left/right 를 오가고, 렌즈 모드에서는 늘 lens */
   private target: GazeTargetId = 'lens';
+  /** 원시 시선을 부드럽게 (홍채·랜드마크 잡음이 프레임마다 튄다) */
+  private gazeX = new Ema(0.35);
+  private gazeY = new Ema(0.35);
+  /** 깜빡이는 동안은 홍채 위치를 믿을 수 없어 직전 값을 유지한다 */
+  private lastRaw: { x: number; y: number } | null = null;
+  /** on-target 히스테리시스: 들어올 때는 엄격하게, 나갈 때는 너그럽게 (표시등이 깜빡이지 않게) */
+  private wasOnTarget = false;
 
   private prevShoulderMid: { x: number; y: number } | null = null;
   private prevWrists: { lx: number; ly: number; rx: number; ry: number } | null = null;
@@ -249,6 +257,10 @@ export class VisionAnalyzer {
 
   reset() {
     this.target = 'lens';
+    this.gazeX.reset();
+    this.gazeY.reset();
+    this.lastRaw = null;
+    this.wasOnTarget = false;
     this.prevShoulderMid = null;
     this.prevWrists = null;
     this.prevPoseT = 0;
@@ -281,8 +293,13 @@ export class VisionAnalyzer {
 
   face(result: FaceLandmarkerResult | null): FaceSample | null {
     if (!result?.faceLandmarks?.length) return null;
-    const raw = rawGaze(result);
-    if (!raw) return null;
+    const blink = isBlinking(result);
+    const measured = rawGaze(result);
+    if (!measured) return null;
+    // 깜빡이는 프레임은 눈꺼풀이 홍채를 가려 값이 튄다 → 직전 값을 쓴다
+    const usable = blink && this.lastRaw ? this.lastRaw : measured;
+    this.lastRaw = usable;
+    const raw = { x: this.gazeX.push(usable.x), y: this.gazeY.push(usable.y) };
 
     const { points } = this.calibration;
     // 좌우 단위: 두 면접관 사이 거리의 절반. 상하 단위: 렌즈에서 책상까지
@@ -300,12 +317,15 @@ export class VisionAnalyzer {
     const t = points[this.target];
     const dx = clamp((raw.x - t.x) / halfSpan, -4, 4);
     const dy = clamp(((raw.y - t.y) / vSpan) * downSign, -4, 4);
+    const slack = this.wasOnTarget ? 1.35 : 1;
+    const onTarget = Math.abs(dx) < OFF_TARGET_X * slack && Math.abs(dy) < OFF_TARGET_Y * slack;
+    this.wasOnTarget = onTarget;
     return {
       yawDev: dx,
       pitchDev: -dy,
-      onTarget: Math.abs(dx) < OFF_TARGET_X && Math.abs(dy) < OFF_TARGET_Y,
+      onTarget,
       lookingDown: gDown > LOOK_DOWN_Y,
-      blink: isBlinking(result),
+      blink,
     };
   }
 

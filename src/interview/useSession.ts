@@ -112,6 +112,8 @@ export interface SessionState {
   mannerHits: MannerHit[];
   /** 녹화된 면접 영상 (리포트 단계) */
   video: { url: string; mimeType: string; sizeBytes: number; durationMs: number } | null;
+  /** 보정·준비 단계의 자세 안내 (비어 있으면 양호) */
+  postureHints: string[];
 }
 
 const INITIAL_LIVE: LiveMetrics = { gaze: 70, gesture: 70, speech: 70, voice: 70, calm: 70 };
@@ -164,6 +166,7 @@ const initialState = (): SessionState => ({
   blindViolations: [],
   mannerHits: [],
   video: null,
+  postureHints: [],
 });
 
 export function useSession(deps: SessionDeps = defaultDeps) {
@@ -174,8 +177,11 @@ export function useSession(deps: SessionDeps = defaultDeps) {
   const [tts] = useState(() => deps.createTts());
 
   const mountedRef = useRef(true);
+  /** 측정 루프에서 현재 단계를 읽기 위한 거울 */
+  const phaseRef = useRef<Phase>('idle');
   const patch = useCallback((p: Partial<SessionState>) => {
     if (!mountedRef.current) return;
+    if (p.phase) phaseRef.current = p.phase;
     setState((s) => ({ ...s, ...p }));
   }, []);
 
@@ -312,9 +318,26 @@ export function useSession(deps: SessionDeps = defaultDeps) {
     }
     const gazeOnTarget = faceN ? onTargetN * 2 >= faceN : null;
 
+    // 보정·준비 단계: 자세를 미리 잡아 준다 (면접 중에는 실시간 경고가 맡는다)
+    const postureHints: string[] = [];
+    {
+      const phase = phaseRef.current;
+      if (phase === 'calibrating' || phase === 'ready') {
+        if (d.faceCoverage < 0.5) postureHints.push('얼굴이 화면에서 자주 벗어납니다. 카메라 정면, 눈높이에 맞춰 앉아 주세요.');
+        if (!d.poseAvailable) postureHints.push('상체가 충분히 보이지 않습니다. 조금 뒤로 앉아 어깨와 가슴이 보이게 해 주세요.');
+        else {
+          if (d.tiltAvg > 5) postureHints.push(`어깨가 ${d.tiltAvg.toFixed(0)}° 기울어 있습니다. 양쪽 어깨를 수평으로 맞춰 주세요.`);
+          if (d.neckAvg < 0.75) postureHints.push('어깨가 올라가고 목이 움츠러들었습니다. 어깨를 내리고 턱을 살짝 당겨 주세요.');
+          else if (d.neckAvg > 1.35) postureHints.push('목이 앞으로 나와 있습니다. 등을 의자에 붙이고 턱을 당겨 주세요.');
+          if (d.selfTouchRatio > 0.2) postureHints.push('손이 얼굴 근처에 있습니다. 두 손을 무릎이나 책상 위에 두세요.');
+        }
+      }
+    }
+
     if (!mountedRef.current) return;
     setState((s) => ({
       ...s,
+      postureHints,
       gazeOnTarget,
       // 답변 중이 아니면 음성 지표는 직전 값을 유지한다 (면접관이 말하는 동안 요동치지 않도록)
       live: d.voiceAvailable ? metrics : { ...metrics, voice: s.live.voice, speech: s.live.speech },
@@ -569,6 +592,9 @@ export function useSession(deps: SessionDeps = defaultDeps) {
       if (abortRef.current) return;
       const stt = sttRef.current;
       stt.gated = true;
+      // iOS Safari 는 음성 인식기가 (재)시작될 때 오디오 세션을 녹음 모드로 바꾸면서 재생 중인 소리를
+      // 끊어 버린다 — 면접관이 말하는 동안은 인식기를 아예 멈추고, 듣는 차례에 다시 켠다
+      stt.stop();
       setAvatars(who.id, 'speaking');
       // 말하는 사람을 보는 게 자연스럽다
       guide(who.id);
@@ -681,6 +707,7 @@ export function useSession(deps: SessionDeps = defaultDeps) {
             await speak(silenceNudgeOf(asker), asker);
             answeringRef.current = true;
             lastUserVoiceRef.current = performance.now();
+            stt.start();
             openMicSoon();
             patch({ subtitle: null });
             setAvatars(asker.id, 'listening', 'writing');

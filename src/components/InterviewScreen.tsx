@@ -233,6 +233,7 @@ export function InterviewScreen({
             <p className="muted tiny" style={{ margin: '4px 0 0' }}>
               {CALIB_COPY[state.calibStep]?.body ?? ''}
             </p>
+            <PostureHints hints={state.postureHints} />
           </div>
         </div>
       )}
@@ -240,6 +241,7 @@ export function InterviewScreen({
       {state.phase === 'ready' && (
         <Overlay>
           <h2>준비가 끝났습니다</h2>
+          <PostureHints hints={state.postureHints} big />
           <ul
             className="muted"
             style={{ textAlign: 'left', maxWidth: 440, lineHeight: 1.9, paddingLeft: 20 }}
@@ -266,6 +268,26 @@ export function InterviewScreen({
           </div>
         </Overlay>
       )}
+    </div>
+  );
+}
+
+/** 보정·준비 단계의 자세 안내. 비어 있으면 "자세 양호" */
+function PostureHints({ hints, big }: { hints: string[]; big?: boolean }) {
+  if (!hints.length) {
+    return (
+      <div className={`posture posture--ok${big ? ' posture--big' : ''}`}>
+        <span aria-hidden>✓</span> 자세 양호 — 어깨 수평, 얼굴 정면, 상체가 보입니다
+      </div>
+    );
+  }
+  return (
+    <div className={`posture posture--fix${big ? ' posture--big' : ''}`}>
+      {hints.map((h) => (
+        <div key={h}>
+          <span aria-hidden>↺</span> {h}
+        </div>
+      ))}
     </div>
   );
 }

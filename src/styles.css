@@ -2386,3 +2386,29 @@ textarea.input {
   flex: none;
   margin: 0;
 }
+
+/* 보정·준비 단계 자세 안내 */
+.posture {
+  margin-top: 8px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  padding: 6px 10px;
+  border-radius: 8px;
+}
+
+.posture--ok {
+  color: var(--good);
+  background: color-mix(in srgb, var(--good) 10%, transparent);
+}
+
+.posture--fix {
+  color: color-mix(in srgb, var(--warn) 75%, var(--text));
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+}
+
+.posture--big {
+  font-size: 14px;
+  text-align: left;
+  max-width: 440px;
+  margin: 0 auto 6px;
+}

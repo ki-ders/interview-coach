@@ -32,6 +32,11 @@ export class AnswerScript {
     this.turn++;
     return this.queue.shift();
   }
+  /** 아직 말을 시작하기 전에 인식기가 멈췄으면(면접관이 재촉하는 등) 답변을 되돌려 놓는다 */
+  putBack(answer: ScriptedAnswer) {
+    this.turn--;
+    this.queue.unshift(answer);
+  }
   get remaining() {
     return this.queue.length;
   }
@@ -120,10 +125,20 @@ export function installFakeRecognition(world: SimWorld, script: AnswerScript, lo
       this.halt();
     }
 
+    /** 지금 턴에서 아직 한 문장도 시작하지 않은 답변 (멈추면 되돌려 놓는다) */
+    private pendingAnswer: ScriptedAnswer | null = null;
+    private pendingSince = 0;
+
     private halt() {
       for (const t of this.timers) window.clearTimeout(t);
       this.timers = [];
       world.speaking = false;
+      if (this.pendingAnswer) {
+        // 사람은 인식기가 껐다 켜진다고 답을 잊지 않는다 — 남은 지연만큼 기다렸다가 같은 답을 한다
+        const waited = performance.now() - this.pendingSince;
+        script.putBack({ ...this.pendingAnswer, delayMs: Math.max(0, (this.pendingAnswer.delayMs ?? 0) - waited) });
+        this.pendingAnswer = null;
+      }
       if (!this.running) return;
       this.running = false;
       window.setTimeout(() => this.onend?.(), 40);
@@ -150,6 +165,8 @@ export function installFakeRecognition(world: SimWorld, script: AnswerScript, lo
       const rate = answer.rate ?? 5;
       const pause = answer.pauseMs ?? 350;
       this.confidence = answer.confidence ?? 0.9;
+      this.pendingAnswer = answer;
+      this.pendingSince = performance.now();
       const sentences = splitSentences(answer.text);
       log(`턴 ${script.turn}: ${sentences.length}문장, ${countSyllables(answer.text)}음절`);
 
@@ -160,6 +177,8 @@ export function installFakeRecognition(world: SimWorld, script: AnswerScript, lo
         const myIndex = index++;
         this.later(at, () => {
           world.speaking = true;
+          // 첫 문장이 시작됐으면 이 답은 "한 것" 이다
+          this.pendingAnswer = null;
         });
         // 단어가 쌓이는 interim 결과
         const steps = Math.max(1, Math.round(durMs / 380));
