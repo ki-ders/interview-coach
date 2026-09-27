@@ -113,6 +113,7 @@ export function ReportScreen({ report, onRestart, summaryPending, video }: Props
             <p className="muted" style={{ margin: '0 0 12px' }}>
               {fmtDuration(report.durationSec)} 동안 {report.answers.length}개 문항에 답했습니다.
               {disqualified && ' 블라인드 규정 위반으로 부적격 처리되었습니다.'}
+              {report.audioOnly && ' 카메라 없이 진행해 시선·몸짓·안정감은 채점하지 않았습니다.'}
             </p>
             <div className="grade-scale" aria-label="등급 척도">
               {GRADES.map((g) => (
@@ -129,9 +130,13 @@ export function ReportScreen({ report, onRestart, summaryPending, video }: Props
                 <span className="chip">
                   가장 좋았던 항목: <b>{strongest.label}</b> {strongest.score}점
                 </span>
-                <span className="chip">
-                  보완할 항목: <b>{weakest.label}</b> {weakest.score}점
-                </span>
+                {weakest.score < 78 ? (
+                  <span className="chip">
+                    보완할 항목: <b>{weakest.label}</b> {weakest.score}점
+                  </span>
+                ) : (
+                  <span className="chip">모든 항목이 기준 이상입니다</span>
+                )}
               </div>
             )}
           </div>

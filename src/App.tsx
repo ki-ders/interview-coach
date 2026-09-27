@@ -61,6 +61,11 @@ export default function App({ sim }: { sim?: SimSetup }) {
     if (config) void beginSession(config);
   }, [beginSession, config]);
 
+  /** 카메라가 없거나 막혔을 때 마이크만으로 이어서 연습한다 */
+  const retryAudioOnly = useCallback(() => {
+    if (config) void beginSession({ ...config, audioOnly: true });
+  }, [beginSession, config]);
+
   const inInterview =
     config !== null &&
     (state.phase === 'loading' ||
@@ -138,6 +143,7 @@ export default function App({ sim }: { sim?: SimSetup }) {
           onReset={backToSetup}
           showDebug={showDebug}
           guideMode={config?.gazeGuide ?? 'lens'}
+          audioOnly={state.audioOnly}
           onSkip={skipQuestion}
         />
       )}
@@ -153,14 +159,24 @@ export default function App({ sim }: { sim?: SimSetup }) {
             <p className="muted" style={{ maxWidth: 460 }}>
               {state.error}
             </p>
-            <div className="row">
+            <div className="row" style={{ justifyContent: 'center', flexWrap: 'wrap' }}>
               <button type="button" className="btn" onClick={backToSetup}>
                 설정으로
               </button>
               <button type="button" className="btn btn--primary" onClick={retry} disabled={!config}>
                 다시 시도
               </button>
+              {state.cameraFailed && (
+                <button type="button" className="btn btn--primary" onClick={retryAudioOnly} disabled={!config}>
+                  카메라 없이 음성만으로 연습
+                </button>
+              )}
             </div>
+            {state.cameraFailed && (
+              <p className="tiny faint" style={{ maxWidth: 460, margin: 0 }}>
+                음성만으로 하면 말투·발성·답변 내용은 그대로 평가하고, 시선·몸짓·안정감은 채점하지 않습니다.
+              </p>
+            )}
           </div>
         </div>
       )}

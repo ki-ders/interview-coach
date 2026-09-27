@@ -116,6 +116,10 @@ export interface SessionState {
   postureHints: string[];
   /** 지금 답변에 남은 시간(초). 듣는 중이 아니면 null */
   answerRemainSec: number | null;
+  /** 오류가 카메라 쪽이라 음성만으로 계속할 수 있는지 */
+  cameraFailed: boolean;
+  /** 이번 세션이 음성 전용인지 */
+  audioOnly: boolean;
 }
 
 const INITIAL_LIVE: LiveMetrics = { gaze: 70, gesture: 70, speech: 70, voice: 70, calm: 70 };
@@ -170,6 +174,8 @@ const initialState = (): SessionState => ({
   video: null,
   postureHints: [],
   answerRemainSec: null,
+  cameraFailed: false,
+  audioOnly: false,
 });
 
 export function useSession(deps: SessionDeps = defaultDeps) {
@@ -198,6 +204,8 @@ export function useSession(deps: SessionDeps = defaultDeps) {
   const stopTickerRef = useRef<(() => void) | null>(null);
   const abortRef = useRef(false);
   const configRef = useRef<SessionConfig | null>(null);
+  /** 음성 전용 세션 — 영상·얼굴·자세 처리를 모두 건너뛴다 */
+  const audioOnlyRef = useRef(false);
   const llmRef = useRef<InterviewerLlm | null>(null);
 
   const startedAtRef = useRef(0);
@@ -327,7 +335,7 @@ export function useSession(deps: SessionDeps = defaultDeps) {
     const postureHints: string[] = [];
     {
       const phase = phaseRef.current;
-      if (phase === 'calibrating' || phase === 'ready') {
+      if (!audioOnlyRef.current && (phase === 'calibrating' || phase === 'ready')) {
         if (d.faceCoverage < 0.5) postureHints.push('얼굴이 화면에서 자주 벗어납니다. 카메라 정면, 눈높이에 맞춰 앉아 주세요.');
         if (!d.poseAvailable) postureHints.push('상체가 충분히 보이지 않습니다. 조금 뒤로 앉아 어깨와 가슴이 보이게 해 주세요.');
         else {
@@ -360,14 +368,19 @@ export function useSession(deps: SessionDeps = defaultDeps) {
     const tts = ttsRef.current;
 
     const tick = () => {
+      const audioOnly = audioOnlyRef.current;
       const video = videoRef.current;
       const marks = marksRef.current;
-      if (!video || !marks || video.readyState < 2) return;
-
-      // rAF(보통 60Hz)가 카메라(보통 30fps)보다 빠르다. 새 프레임이 없는 틱을 집계하면
-      // 그 틱이 "얼굴 없음"으로 잡혀 감지율이 반토막 나므로 새 프레임일 때만 처리한다.
-      if (video.currentTime === lastVideoTimeRef.current) return;
-      lastVideoTimeRef.current = video.currentTime;
+      if (audioOnly) {
+        // 영상이 없으니 30Hz 로만 마이크를 읽는다
+        if (performance.now() - lastFrameRef.current < 30) return;
+      } else {
+        if (!video || !marks || video.readyState < 2) return;
+        // rAF(보통 60Hz)가 카메라(보통 30fps)보다 빠르다. 새 프레임이 없는 틱을 집계하면
+        // 그 틱이 "얼굴 없음"으로 잡혀 감지율이 반토막 나므로 새 프레임일 때만 처리한다.
+        if (video.currentTime === lastVideoTimeRef.current) return;
+        lastVideoTimeRef.current = video.currentTime;
+      }
 
       const now = performance.now();
       const t = now - startedAtRef.current;
@@ -377,7 +390,7 @@ export function useSession(deps: SessionDeps = defaultDeps) {
       let faceSample = null;
       let poseSample = null;
       vision.tickFps(now);
-      try {
+      if (!audioOnly && video && marks) try {
         const faceResult = marks.face.detectForVideo(video, now);
         if (calibRef.current.active) calibRef.current.collector.add(faceResult);
         faceSample = vision.face(faceResult);
@@ -440,23 +453,37 @@ export function useSession(deps: SessionDeps = defaultDeps) {
       // 버튼 탭의 사용자 제스처가 살아 있을 때 오디오 컨텍스트를 만들어 둔다 (iOS Safari)
       micRef.current.prime();
       ttsRef.current.prime();
-      patch({ phase: 'loading', error: null, loadingMessage: '카메라와 마이크 권한을 확인합니다…' });
+      const audioOnly = config.audioOnly === true;
+      audioOnlyRef.current = audioOnly;
+      patch({
+        phase: 'loading',
+        error: null,
+        cameraFailed: false,
+        audioOnly,
+        loadingMessage: audioOnly ? '마이크 권한을 확인합니다…' : '카메라와 마이크 권한을 확인합니다…',
+      });
 
+      const audio = { echoCancellation: true, noiseSuppression: false, autoGainControl: false };
+      /** 카메라 단계에서 실패했는지 (마이크는 될 수도 있다) */
+      let cameraStage = !audioOnly;
       try {
-        const stream = await deps.getUserMedia({
-          video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
-          audio: { echoCancellation: true, noiseSuppression: false, autoGainControl: false },
-        });
+        const stream = await deps.getUserMedia(
+          audioOnly ? { audio } : { video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' }, audio },
+        );
+        cameraStage = false;
         streamRef.current = stream;
-        // 화면 전환 직후라 <video> 가 아직 붙지 않았을 수 있다
-        const video = await waitFor(() => videoRef.current, 3000);
-        if (!video) throw new Error('영상 요소를 준비하지 못했습니다.');
-        video.srcObject = stream;
-        await video.play().catch(() => undefined);
+        if (!audioOnly) {
+          // 화면 전환 직후라 <video> 가 아직 붙지 않았을 수 있다
+          const video = await waitFor(() => videoRef.current, 3000);
+          if (!video) throw new Error('영상 요소를 준비하지 못했습니다.');
+          video.srcObject = stream;
+          await video.play().catch(() => undefined);
+        }
 
         await micRef.current.attach(stream);
         await ttsRef.current.init();
-        marksRef.current = await deps.loadLandmarkers((msg) => patch({ loadingMessage: msg }));
+        // 음성 전용이면 얼굴·자세 모델(약 20MB)을 받지 않는다
+        marksRef.current = audioOnly ? null : await deps.loadLandmarkers((msg) => patch({ loadingMessage: msg }));
         llmRef.current = await deps.createLlm(config).catch(() => null);
         // Gemini 키가 있고 자연 음성을 켜 두었으면 면접관이 Gemini 음성으로 말한다
         ttsRef.current.useGemini(config.llmProvider === 'gemini' && config.naturalVoice ? config.apiKey : null);
@@ -486,13 +513,20 @@ export function useSession(deps: SessionDeps = defaultDeps) {
         });
         return true;
       } catch (err) {
+        const name = err instanceof DOMException ? err.name : '';
         const msg =
-          err instanceof DOMException && (err.name === 'NotAllowedError' || err.name === 'SecurityError')
-            ? '카메라/마이크 권한이 거부되었습니다. 주소창의 권한 아이콘에서 허용한 뒤 다시 시도해 주세요.'
-            : err instanceof DOMException && err.name === 'NotFoundError'
-              ? '카메라 또는 마이크를 찾을 수 없습니다. 장치 연결을 확인해 주세요.'
-              : `준비 중 오류가 발생했습니다: ${err instanceof Error ? err.message : String(err)}`;
-        patch({ phase: 'error', error: msg });
+          name === 'NotAllowedError' || name === 'SecurityError'
+            ? audioOnly
+              ? '마이크 권한이 거부되었습니다. 주소창의 권한 아이콘에서 허용한 뒤 다시 시도해 주세요.'
+              : '카메라/마이크 권한이 거부되었습니다. 주소창의 권한 아이콘에서 허용한 뒤 다시 시도해 주세요.'
+            : name === 'NotFoundError'
+              ? audioOnly
+                ? '마이크를 찾을 수 없습니다. 장치 연결을 확인해 주세요.'
+                : '카메라 또는 마이크를 찾을 수 없습니다. 장치 연결을 확인해 주세요.'
+              : name === 'NotReadableError'
+                ? '카메라나 마이크를 다른 앱(화상회의 등)이 쓰고 있습니다. 그 앱을 닫고 다시 시도해 주세요.'
+                : `준비 중 오류가 발생했습니다: ${err instanceof Error ? err.message : String(err)}`;
+        patch({ phase: 'error', error: msg, cameraFailed: cameraStage });
         return false;
       }
     },
@@ -527,6 +561,11 @@ export function useSession(deps: SessionDeps = defaultDeps) {
       if (abortRef.current) return false;
     }
     mic.finishNoiseCalibration();
+
+    if (audioOnlyRef.current) {
+      patch({ calibStep: 'done', phase: 'ready' });
+      return true;
+    }
 
     // 실제로 바라볼 지점(왼쪽 면접관 눈 → 오른쪽 면접관 눈 → 렌즈 → 책상)을 차례로 보게 해서 원시값을 잰다
     patch({ gazeGuideTarget: ids[0] });
@@ -584,7 +623,7 @@ export function useSession(deps: SessionDeps = defaultDeps) {
   const guide = useCallback(
     (target: 'lens' | string) => {
       const cfg = configRef.current;
-      if (!cfg || cfg.gazeGuide !== 'interviewer') return;
+      if (!cfg || cfg.gazeGuide !== 'interviewer' || audioOnlyRef.current) return;
       const side = target === cfg.interviewerIds[0] ? 'left' : target === cfg.interviewerIds[1] ? 'right' : 'lens';
       visionRef.current.setTarget(side);
       patch({ gazeGuideTarget: target });
@@ -798,7 +837,9 @@ export function useSession(deps: SessionDeps = defaultDeps) {
     const answers = answersRef.current;
     const text = textStatsOf(answers);
     const metrics = computeMetrics(d, text);
-    const breakdown = buildBreakdown(d, text, metrics);
+    const audioOnly = audioOnlyRef.current;
+    const VIDEO_KEYS = ['gaze', 'gesture', 'calm'];
+    const breakdown = buildBreakdown(d, text, metrics).filter((b) => !audioOnly || !VIDEO_KEYS.includes(b.key));
     const content = summarizeContent(answers);
 
     const strictness = cfg
@@ -807,13 +848,16 @@ export function useSession(deps: SessionDeps = defaultDeps) {
 
     // 음성 인식이 안 되는 브라우저에서는 내용 점수를 총점에 넣지 않는다 (NaN 은 가중 평균에서 빠진다)
     const contentScore = sttRef.current.supported ? content.score : NaN;
+    // 음성 전용이면 영상 지표는 NaN 으로 가중 평균에서 뺀다 (50점으로 섞이면 총점이 왜곡된다)
+    const vid = (x: number) => (audioOnly ? NaN : x);
     const rawTotal = weighted([
-      [metrics.gaze, 0.2],
-      [metrics.gesture, 0.18],
+      [vid(metrics.gaze), 0.2],
+      [vid(metrics.gesture), 0.18],
       [metrics.speech, 0.22],
       [metrics.voice, 0.15],
-      [metrics.calm, 0.15],
-      [contentScore, 0.1],
+      [vid(metrics.calm), 0.15],
+      // 음성 전용이면 내용 비중을 키운다 (영상 없이 남는 건 말과 내용뿐이다)
+      [contentScore, audioOnly ? 0.25 : 0.1],
     ]);
     // 엄격한 면접관일수록 같은 수행에 더 낮은 점수를 준다
     const adjusted = clamp(Math.round(50 + (rawTotal - 50) * (2 - strictness)), 0, 100);
@@ -826,6 +870,7 @@ export function useSession(deps: SessionDeps = defaultDeps) {
 
     const blind = cfg?.blindMode ? { violations: blindRef.current, disqualified: blindRef.current.length > 0 } : undefined;
     const report: SessionReport = {
+      audioOnly,
       total,
       grade: blind?.disqualified ? '부적격' : gradeOf(total),
       breakdown,
@@ -906,10 +951,10 @@ export function useSession(deps: SessionDeps = defaultDeps) {
       totalQuestions: cfg.questions.length,
       blindViolations: [],
       mannerHits: [],
-      gazeGuideTarget: cfg.gazeGuide === 'interviewer' ? a.id : null,
+      gazeGuideTarget: cfg.gazeGuide === 'interviewer' && !audioOnlyRef.current ? a.id : null,
       video: null,
     });
-    if (cfg.recordVideo && streamRef.current) {
+    if (cfg.recordVideo && !audioOnlyRef.current && streamRef.current) {
       if (!recorderRef.current.start(streamRef.current)) {
         patch({ notice: '이 브라우저는 영상 녹화를 지원하지 않아 녹화 없이 진행합니다.' });
       }
@@ -1193,6 +1238,7 @@ export function useSession(deps: SessionDeps = defaultDeps) {
 
   const reset = useCallback(() => {
     teardown();
+    audioOnlyRef.current = false;
     void recorderRef.current.stop();
     if (videoUrlRef.current) {
       URL.revokeObjectURL(videoUrlRef.current);

@@ -18,6 +18,8 @@ interface Props {
   guideMode?: 'interviewer' | 'lens';
   /** 이 질문 건너뛰기 */
   onSkip?: () => void;
+  /** 카메라 없이 음성만 */
+  audioOnly?: boolean;
 }
 
 const ORDER: MetricKey[] = ['gaze', 'gesture', 'speech', 'voice', 'calm'];
@@ -69,6 +71,7 @@ export function InterviewScreen({
   showDebug,
   guideMode = 'lens',
   onSkip,
+  audioOnly = false,
 }: Props) {
   const [a, b] = interviewerIds.map(getInterviewer);
   const running = state.phase === 'running';
@@ -109,6 +112,7 @@ export function InterviewScreen({
               running={running}
               guideTarget={state.gazeGuideTarget}
               guideMode={guideMode}
+              hideGaze={audioOnly}
             />
 
             {state.subtitle ? (
@@ -146,7 +150,9 @@ export function InterviewScreen({
           <div className="row" style={{ justifyContent: 'space-between' }}>
             <span className="tiny faint">
               {running
-                ? guideMode === 'interviewer'
+                ? audioOnly
+                  ? '면접관이 듣고 있습니다. 실제 면접처럼 또박또박, 결론부터 말해 보세요.'
+                  : guideMode === 'interviewer'
                   ? '면접관이 듣고 있습니다. 질문한 면접관의 눈을 보며 말해 보세요.'
                   : '면접관이 듣고 있습니다. 카메라 렌즈를 보며 말해 보세요.'
                 : '카메라는 이 기기 밖으로 나가지 않습니다.'}
@@ -164,7 +170,16 @@ export function InterviewScreen({
         </div>
 
         <aside className="stack" style={{ gap: 14 }}>
-          {selfView}
+          {audioOnly ? (
+            <div className="card card__pad audio-only">
+              <strong>🎙 음성만으로 연습 중</strong>
+              <div className="tiny faint" style={{ marginTop: 4 }}>
+                카메라를 쓰지 않습니다. 말투·발성·답변 내용만 평가합니다.
+              </div>
+            </div>
+          ) : (
+            selfView
+          )}
 
           <div className="card card__pad">
             <div className="row" style={{ justifyContent: 'space-between', marginBottom: 12 }}>
@@ -172,7 +187,7 @@ export function InterviewScreen({
               <span className="tiny faint">최근 12초</span>
             </div>
             <div className="hud">
-              {ORDER.map((k) => (
+              {ORDER.filter((k) => !audioOnly || k === 'speech' || k === 'voice').map((k) => (
                 <Gauge key={k} label={METRIC_LABELS[k]} value={state.live[k]} />
               ))}
             </div>

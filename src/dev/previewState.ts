@@ -51,5 +51,7 @@ export function makePreviewState(): SessionState {
     video: null,
     postureHints: [],
     answerRemainSec: 74,
+    cameraFailed: false,
+    audioOnly: false,
   };
 }

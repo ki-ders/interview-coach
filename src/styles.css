@@ -2472,3 +2472,7 @@ textarea.input {
   padding: 3px 10px;
   font-size: 12px;
 }
+
+.audio-only {
+  border-style: dashed;
+}

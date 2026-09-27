@@ -160,6 +160,8 @@ export interface SessionReport {
   alerts: LiveAlert[];
   /** 블라인드 면접 모드였다면 규정 위반 내역. 하나라도 있으면 부적격 */
   blind?: { violations: BlindViolation[]; disqualified: boolean };
+  /** 카메라 없이 음성만으로 진행한 면접 (시선·몸짓·안정감 제외) */
+  audioOnly?: boolean;
   /** 반말·비속어 (총점에서 깎인 점수 포함) */
   manner: { banmal: number; profanity: number; penalty: number; hits: MannerHit[] };
 }
@@ -203,4 +205,6 @@ export interface SessionConfig {
   naturalVoice: boolean;
   /** 답변 음성을 두뇌(Gemini)가 직접 듣고 받아 적는다 — 브라우저 인식보다 정확. 실패하면 브라우저 결과 */
   accurateStt: boolean;
+  /** 카메라 없이 마이크만으로 연습 (시선·몸짓·안정감은 채점하지 않는다) */
+  audioOnly?: boolean;
 }

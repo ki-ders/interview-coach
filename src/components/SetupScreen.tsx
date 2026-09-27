@@ -49,6 +49,7 @@ interface Prefs {
   recordVideo: boolean;
   naturalVoice: boolean;
   accurateStt: boolean;
+  useCamera: boolean;
   blindName: string;
   blindSchool: string;
   blindExtra: string;
@@ -59,6 +60,7 @@ const DEFAULT_PREFS: Prefs = {
   recordVideo: true,
   naturalVoice: true,
   accurateStt: true,
+  useCamera: true,
   blindName: '',
   blindSchool: '',
   blindExtra: '',
@@ -75,6 +77,7 @@ function loadPrefs(): Prefs {
       recordVideo: parsed.recordVideo !== false,
       naturalVoice: parsed.naturalVoice !== false,
       accurateStt: parsed.accurateStt !== false,
+      useCamera: parsed.useCamera !== false,
       blindName: typeof parsed.blindName === 'string' ? parsed.blindName : '',
       blindSchool: typeof parsed.blindSchool === 'string' ? parsed.blindSchool : '',
       blindExtra: typeof parsed.blindExtra === 'string' ? parsed.blindExtra : '',
@@ -198,6 +201,7 @@ export function SetupScreen({ onStart }: Props) {
       recordVideo: prefs.recordVideo,
       naturalVoice: prefs.naturalVoice,
       accurateStt: prefs.accurateStt,
+      audioOnly: !prefs.useCamera,
     });
   };
 
@@ -319,6 +323,24 @@ export function SetupScreen({ onStart }: Props) {
         <div className="section-title">
           <span className="section-title__num">3</span>
           <h2>진행 방식</h2>
+        </div>
+
+        <div className="switch-row">
+          <div className="switch-row__body">
+            <div className="switch-row__title">카메라 사용</div>
+            <div className="muted tiny">
+              {prefs.useCamera
+                ? '카메라로 시선·몸짓·다리 떨림까지 봅니다.'
+                : '마이크만 씁니다. 말투·발성·답변 내용만 평가하고, 시선·몸짓·안정감은 채점하지 않습니다 (영상 녹화도 없음).'}
+            </div>
+          </div>
+          <button
+            type="button"
+            className={`switch${prefs.useCamera ? ' switch--on' : ''}`}
+            onClick={() => setPref('useCamera', !prefs.useCamera)}
+            aria-pressed={prefs.useCamera}
+            aria-label="카메라 사용"
+          />
         </div>
 
         <div className="switch-row">

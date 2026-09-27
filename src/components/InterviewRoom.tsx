@@ -18,6 +18,8 @@ interface Props {
   guideMode?: 'interviewer' | 'lens';
   /** 안내 점의 화면상 위치(0~1)를 알려준다 */
   onGuideMeasured?: (fx: number, fy: number) => void;
+  /** 카메라가 없으면 시선 표시를 숨긴다 */
+  hideGaze?: boolean;
 }
 
 const STATE_LABEL: Record<AvatarState, string> = {
@@ -32,7 +34,17 @@ const STATE_LABEL: Record<AvatarState, string> = {
  * 면접실 한 공간. CSS 3D 로 벽·바닥·긴 책상을 깔고, 그 뒤에 두 면접관(2.5D 사진)을
  * 사용자 쪽으로 살짝 돌려 앉힌다. 위쪽 가운데에는 "여기를 보세요" 렌즈 표시가 항상 떠 있다.
  */
-export function InterviewRoom({ pair, states, speakingId, gazeOnTarget, running, guideTarget, guideMode = 'lens', onGuideMeasured }: Props) {
+export function InterviewRoom({
+  pair,
+  states,
+  speakingId,
+  gazeOnTarget,
+  running,
+  guideTarget,
+  guideMode = 'lens',
+  onGuideMeasured,
+  hideGaze = false,
+}: Props) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const backdrop = useBackdrop();
   return (
@@ -74,7 +86,7 @@ export function InterviewRoom({ pair, states, speakingId, gazeOnTarget, running,
         ))}
       </div>
 
-      <LensMark onTarget={gazeOnTarget} running={running} mode={guideMode} />
+      {!hideGaze && <LensMark onTarget={gazeOnTarget} running={running} mode={guideMode} />}
       {guideTarget && <GuideDot rootRef={rootRef} target={guideTarget} onMeasured={onGuideMeasured} />}
     </div>
   );
