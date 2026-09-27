@@ -13,6 +13,7 @@ import {
 } from '../interview/llm';
 import { BackdropPicker } from './BackdropPicker';
 import { VoicePicker } from './VoicePicker';
+import { HistoryCard } from './HistoryCard';
 
 interface Props {
   onStart: (config: SessionConfig) => void;
@@ -214,6 +215,8 @@ export function SetupScreen({ onStart }: Props) {
           질문하고, 끝나면 항목별 점수와 개선점을 정리해 드립니다.
         </p>
       </div>
+
+      <HistoryCard />
 
       {/* 1. 면접관 */}
       <section className="card card__pad">
@@ -604,13 +607,25 @@ export function SetupScreen({ onStart }: Props) {
         소리가 0.3~1초 늦게 들릴 수 있어, 자막과 입 움직임을 소리에 맞춰 늦춰 보여 줍니다.
       </div>
 
-      <div className="row" style={{ justifyContent: 'center' }}>
-        <button
-          type="button"
-          className="btn btn--primary btn--lg"
-          disabled={!ready || !keyLooksOk}
-          onClick={submit}
-        >
+      {/* 설정이 길어 시작 버튼이 멀다 — 화면 아래에 늘 붙어 있는 요약 + 시작 */}
+      <div className="startbar">
+        <div className="startbar__summary">
+          {picked.length === 2 ? (
+            <>
+              <b>{picked.map((id) => INTERVIEWERS.find((w) => w.id === id)?.name).join(' · ')}</b>
+              <span className="faint">
+                {' '}
+                · {questions.length}문항 · 약 {estimate}분{prefs.useCamera ? '' : ' · 음성만'}
+                {prefs.blindMode ? ' · 블라인드' : ''}
+                {provider !== 'none' ? ` · ${PROVIDER_LABEL[provider]}` : ''}
+              </span>
+            </>
+          ) : (
+            <span className="faint">면접관을 두 명 골라 주세요</span>
+          )}
+          {!keyLooksOk && <div className="tiny" style={{ color: 'var(--warn)' }}>면접관 두뇌의 API 키를 넣거나 "없음" 을 고르세요</div>}
+        </div>
+        <button type="button" className="btn btn--primary btn--lg" disabled={!ready || !keyLooksOk} onClick={submit}>
           면접 시작하기
         </button>
       </div>

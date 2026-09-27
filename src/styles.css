@@ -2476,3 +2476,102 @@ textarea.input {
 .audio-only {
   border-style: dashed;
 }
+
+/* 좁은 화면(아이패드 세로 등): 오른쪽 칸이 아래로 내려오면 셀프뷰가 화면 폭을 다 차지해
+   실시간 분석·경고·받아쓰기가 스크롤 아래로 밀린다 → 셀프뷰와 분석을 한 줄에 나란히 */
+@media (max-width: 900px) {
+  .stage > aside {
+    display: grid;
+    grid-template-columns: minmax(140px, 38%) 1fr;
+    gap: 12px;
+    align-items: start;
+  }
+  .stage > aside > * {
+    margin: 0;
+  }
+  .stage > aside > :not(.selfview):not(.audio-only):not(:nth-child(2)) {
+    grid-column: 1 / -1;
+  }
+  .stage > aside .hud {
+    gap: 6px;
+  }
+}
+
+@media (max-width: 560px) {
+  .stage > aside {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+/* 메모 중 아이콘이 얼굴을 가리지 않게 어깨 쪽 아래 모서리로 */
+.seat .tile__note {
+  right: 8%;
+  bottom: 8%;
+  width: 38px;
+  height: 38px;
+}
+
+/* 설정 화면 아래에 붙는 시작 막대 */
+.startbar {
+  position: sticky;
+  bottom: 12px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 14px 12px 18px;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+  backdrop-filter: blur(10px);
+}
+
+.startbar__summary {
+  flex: 1;
+  min-width: 0;
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+
+@media (max-width: 560px) {
+  .startbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+  .startbar .btn {
+    width: 100%;
+  }
+}
+
+/* 리포트: 지난번 대비 */
+.progress-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: -4px 0 10px;
+  flex-wrap: wrap;
+}
+
+.chip--up {
+  color: var(--good);
+  border-color: color-mix(in srgb, var(--good) 45%, var(--border));
+}
+
+.chip--down {
+  color: var(--bad);
+  border-color: color-mix(in srgb, var(--bad) 45%, var(--border));
+}
+
+.spark {
+  display: block;
+}
+
+/* 설정: 지난 연습 */
+.history__row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}

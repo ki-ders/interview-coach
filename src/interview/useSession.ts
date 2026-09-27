@@ -40,6 +40,7 @@ import { AnswerRecorder, type AnswerAudio } from '../audio/answerRecorder';
 import { createInterviewerLlm, type InterviewerLlm } from './llm';
 import { clamp, gradeOf, weighted } from '../lib/signal';
 import { startTicker } from '../lib/ticker';
+import { addHistory, compareWithLast, toEntry } from '../lib/history';
 
 export type Phase = 'idle' | 'loading' | 'calibrating' | 'ready' | 'running' | 'report' | 'error';
 
@@ -890,6 +891,17 @@ export function useSession(deps: SessionDeps = defaultDeps) {
       durationSec: stats.ms / 1000,
       alerts: alertsRef.current,
     };
+
+    // 지난 연습과 비교하고 이번 결과를 기록한다
+    {
+      const entry = toEntry(report);
+      const before = addHistory(entry);
+      const cmp = compareWithLast(entry, before);
+      if (cmp) {
+        const totals = [...before.filter((e) => e.audioOnly === entry.audioOnly).map((e) => e.total), entry.total].slice(-10);
+        report.progress = { ...cmp, totals };
+      }
+    }
 
     releaseMedia();
     if (!mountedRef.current) return;

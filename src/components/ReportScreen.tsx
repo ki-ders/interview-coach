@@ -17,6 +17,8 @@ interface Props {
   summaryPending?: boolean;
   /** 녹화된 면접 영상 */
   video?: ReportVideo | null;
+  /** 같은 설정·질문으로 바로 다시 */
+  onRetrySame?: () => void;
 }
 
 const GRADES = ['S', 'A', 'B', 'C', 'D', 'F'];
@@ -78,6 +80,26 @@ function ActionPlan({ report }: { report: SessionReport }) {
   );
 }
 
+/** 최근 총점 추이 (마지막 점이 이번) */
+function Spark({ values }: { values: number[] }) {
+  if (values.length < 2) return null;
+  const W = 120;
+  const H = 28;
+  // 데이터 범위에 맞춰야 몇 점 차이도 보인다 (0~100 으로 그리면 거의 평평하다)
+  const lo = Math.min(...values) - 6;
+  const hi = Math.max(...values) + 6;
+  const x = (i: number) => (i / (values.length - 1)) * (W - 6) + 3;
+  const y = (v: number) => H - 3 - ((v - lo) / Math.max(1, hi - lo)) * (H - 6);
+  const d = values.map((v, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+  const last = values.length - 1;
+  return (
+    <svg className="spark" width={W} height={H} viewBox={`0 0 ${W} ${H}`} role="img" aria-label={`최근 ${values.length}회 총점 ${values.join(', ')}`}>
+      <path d={d} fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinejoin="round" />
+      <circle cx={x(last)} cy={y(values[last])} r="3.5" fill="var(--accent)" />
+    </svg>
+  );
+}
+
 function scoreColor(score: number) {
   if (score >= 75) return 'var(--good)';
   if (score >= 50) return 'var(--warn)';
@@ -91,7 +113,7 @@ function verdictOf(score: number) {
   return '집중 연습이 필요합니다';
 }
 
-export function ReportScreen({ report, onRestart, summaryPending, video }: Props) {
+export function ReportScreen({ report, onRestart, summaryPending, video, onRetrySame }: Props) {
   const ai = report.content.llm;
   const disqualified = report.blind?.disqualified === true;
   const weakest = [...report.breakdown].sort((a, b) => a.score - b.score)[0];
@@ -115,6 +137,14 @@ export function ReportScreen({ report, onRestart, summaryPending, video }: Props
               {disqualified && ' 블라인드 규정 위반으로 부적격 처리되었습니다.'}
               {report.audioOnly && ' 카메라 없이 진행해 시선·몸짓·안정감은 채점하지 않았습니다.'}
             </p>
+            {report.progress && (
+              <div className="progress-row">
+                <span className={`chip ${report.progress.delta > 0 ? 'chip--up' : report.progress.delta < 0 ? 'chip--down' : ''}`}>
+                  {report.progress.delta > 0 ? '▲' : report.progress.delta < 0 ? '▼' : '＝'} {report.progress.text}
+                </span>
+                <Spark values={report.progress.totals} />
+              </div>
+            )}
             <div className="grade-scale" aria-label="등급 척도">
               {GRADES.map((g) => (
                 <span key={g} className={!disqualified && report.grade === g ? 'on' : ''}>
@@ -375,6 +405,11 @@ export function ReportScreen({ report, onRestart, summaryPending, video }: Props
         <button type="button" className="btn btn--primary btn--lg" onClick={onRestart}>
           다시 연습하기
         </button>
+        {onRetrySame && (
+          <button type="button" className="btn btn--primary btn--lg" onClick={onRetrySame}>
+            같은 질문으로 다시
+          </button>
+        )}
       </div>
     </div>
   );

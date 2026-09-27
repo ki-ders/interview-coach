@@ -149,7 +149,13 @@ export default function App({ sim }: { sim?: SimSetup }) {
       )}
 
       {state.phase === 'report' && state.report && (
-        <ReportScreen report={state.report} onRestart={backToSetup} summaryPending={state.llmSummaryPending} video={state.video} />
+        <ReportScreen
+          report={state.report}
+          onRestart={backToSetup}
+          onRetrySame={config ? () => void beginSession(config) : undefined}
+          summaryPending={state.llmSummaryPending}
+          video={state.video}
+        />
       )}
 
       {state.phase === 'error' && (

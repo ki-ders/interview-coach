@@ -162,6 +162,8 @@ export interface SessionReport {
   blind?: { violations: BlindViolation[]; disqualified: boolean };
   /** 카메라 없이 음성만으로 진행한 면접 (시선·몸짓·안정감 제외) */
   audioOnly?: boolean;
+  /** 지난 연습과의 비교 (같은 방식 기록이 있을 때) */
+  progress?: { delta: number; text: string; totals: number[] };
   /** 반말·비속어 (총점에서 깎인 점수 포함) */
   manner: { banmal: number; profanity: number; penalty: number; hits: MannerHit[] };
 }
