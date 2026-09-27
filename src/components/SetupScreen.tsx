@@ -14,6 +14,7 @@ import {
 import { BackdropPicker } from './BackdropPicker';
 import { VoicePicker } from './VoicePicker';
 import { HistoryCard } from './HistoryCard';
+import { JobQuestions } from './JobQuestions';
 
 interface Props {
   onStart: (config: SessionConfig) => void;
@@ -315,10 +316,19 @@ export function SetupScreen({ onStart }: Props) {
               if (e.key === 'Enter') addQuestion();
             }}
           />
-          <button type="button" className="btn" onClick={addQuestion} disabled={!draft.trim()}>
+          <button type="button" className="btn" style={{ flex: "none", whiteSpace: "nowrap" }} onClick={addQuestion} disabled={!draft.trim()}>
             추가
           </button>
         </div>
+
+        <JobQuestions
+          provider={provider}
+          apiKey={apiKey}
+          onGenerated={(list) => {
+            setQuestions(list);
+            setPackId('custom');
+          }}
+        />
       </section>
 
       {/* 3. 설정 */}

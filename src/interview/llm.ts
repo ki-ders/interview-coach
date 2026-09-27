@@ -8,7 +8,7 @@
  * 어느 쪽이든 실패하면 조용히 규칙 기반으로 돌아가므로 면접은 끊기지 않는다.
  */
 import type { AnswerRecord, Interviewer } from '../types';
-import type { EvalOpts, LlmSummary, LlmVerdict } from './llmPrompts';
+import type { EvalOpts, GeneratedQuestion, LlmSummary, LlmVerdict } from './llmPrompts';
 
 export type LlmProvider = 'none' | 'gemini' | 'claude';
 
@@ -25,6 +25,8 @@ export interface InterviewerLlm {
   summarize(answers: AnswerRecord[], interviewers: Interviewer[]): Promise<LlmSummary | null>;
   /** 키가 유효한지 확인 */
   test(): Promise<LlmTestResult>;
+  /** 채용 공고·직무 설명으로 예상 질문을 만든다. 실패하면 null */
+  generateQuestions?(context: string, count: number): Promise<GeneratedQuestion[] | null>;
   /**
    * 답변 음성을 직접 듣고 받아 적는다 (브라우저 인식보다 정확). 지원하지 않거나 실패하면 null.
    * hint 는 브라우저 인식 결과 — 고유명사 등을 맞추는 데 참고만 한다.
@@ -64,4 +66,4 @@ export async function createInterviewerLlm(provider: LlmProvider, apiKey: string
   return new ClaudeLlm(apiKey);
 }
 
-export type { EvalOpts, LlmSummary, LlmVerdict } from './llmPrompts';
+export type { EvalOpts, GeneratedQuestion, LlmSummary, LlmVerdict } from './llmPrompts';

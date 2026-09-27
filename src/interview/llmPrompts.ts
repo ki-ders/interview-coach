@@ -180,3 +180,55 @@ export function normalizeSummary(raw: unknown): LlmSummary | null {
   if (!summary) return null;
   return { summary: summary.slice(0, 600), strengths: list(r.strengths), improvements: list(r.improvements) };
 }
+
+/* ── 채용 공고·직무로 예상 질문 만들기 ─────────────────────────── */
+
+export interface GeneratedQuestion {
+  text: string;
+  /** 좋은 답변에 나올 법한 핵심어 (규칙 기반 연관성 채점에 쓴다) */
+  keywords: string[];
+  category: string;
+}
+
+export const QUESTIONS_SHAPE = `{
+  "questions": [
+    { "text": "면접 질문 한 문장 (한국어 존댓말)", "keywords": ["좋은 답변에 나올 핵심어 3~6개"], "category": "공통|직무|인성|압박 중 하나" }
+  ]
+}`;
+
+export function buildQuestionsPrompt(context: string, count: number): { system: string; user: string } {
+  const system = [
+    '당신은 한국 기업·기관의 면접관입니다. 지원자가 준 채용 공고나 직무 설명을 읽고, 실제 면접에서 나올 법한 질문을 만듭니다.',
+    `- 질문은 정확히 ${count}개. 첫 질문은 자기소개, 마지막은 지원 동기나 입사 후 포부로 한다.`,
+    '- 나머지는 공고에 적힌 직무·자격 요건·우대 사항을 직접 짚는 직무 질문과, 경험을 묻는 행동 질문(구체적 사례를 요구)을 섞는다.',
+    '- 한 질문에 하나만 묻는다. 한 문장, 존댓말, 60자 이내.',
+    '- 블라인드 채용 원칙상 출신 학교·가족·나이·성별·외모를 묻는 질문은 만들지 않는다.',
+    '- keywords 는 좋은 답변에 들어갈 법한 핵심 명사 3~6개.',
+    '- 반드시 아래 형태의 JSON 만 출력한다.',
+    QUESTIONS_SHAPE,
+  ].join('\n');
+  const user = `[채용 공고 / 직무 설명]\n${context.trim().slice(0, 6000)}`;
+  return { system, user };
+}
+
+export function normalizeQuestions(raw: unknown, count: number): GeneratedQuestion[] | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const list = (raw as { questions?: unknown }).questions;
+  if (!Array.isArray(list)) return null;
+  const out: GeneratedQuestion[] = [];
+  const seen = new Set<string>();
+  for (const item of list) {
+    if (!item || typeof item !== 'object') continue;
+    const r = item as Record<string, unknown>;
+    const text = String(r.text ?? '').trim().replace(/\s+/g, ' ');
+    if (text.length < 6 || text.length > 120 || seen.has(text)) continue;
+    seen.add(text);
+    const keywords = Array.isArray(r.keywords)
+      ? r.keywords.map((k) => String(k).trim()).filter((k) => k.length >= 1 && k.length <= 12).slice(0, 6)
+      : [];
+    const category = String(r.category ?? '직무').trim().slice(0, 8) || '직무';
+    out.push({ text, keywords, category });
+    if (out.length >= count) break;
+  }
+  return out.length ? out : null;
+}

@@ -5,6 +5,9 @@
  */
 import type { AnswerRecord, Interviewer } from '../types';
 import {
+  buildQuestionsPrompt,
+  normalizeQuestions,
+  type GeneratedQuestion,
   buildEvalPrompt,
   buildSummaryPrompt,
   extractJson,
@@ -34,6 +37,25 @@ const VERDICT_SCHEMA = {
     flags: { type: 'ARRAY', items: { type: 'STRING' } },
   },
   required: ['relevance', 'note', 'followUp', 'handoff', 'bridge', 'gist', 'flags'],
+};
+
+const QUESTIONS_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    questions: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
+        properties: {
+          text: { type: 'STRING' },
+          keywords: { type: 'ARRAY', items: { type: 'STRING' } },
+          category: { type: 'STRING' },
+        },
+        required: ['text', 'keywords', 'category'],
+      },
+    },
+  },
+  required: ['questions'],
 };
 
 const TRANSCRIPT_SCHEMA = {
@@ -105,7 +127,7 @@ export class GeminiLlm implements InterviewerLlm {
         if (!res.ok) {
           this.lastError =
             res.status === 429
-              ? '무료 사용량 한도에 잠시 걸렸습니다 (분당 요청 제한). 잠깐 뒤 다시 시도됩니다.'
+              ? 'Gemini 무료 사용량 한도(분당 요청 수)에 걸렸습니다. 1분쯤 뒤 다시 시도해 주세요. 면접 중이면 그동안 규칙 기반으로 진행합니다.'
               : res.status === 400 || res.status === 403
                 ? `Gemini 키가 거부되었습니다 (${data.error?.message ?? res.status}).`
                 : `Gemini 오류 ${res.status}: ${data.error?.message ?? ''}`;
@@ -138,6 +160,14 @@ export class GeminiLlm implements InterviewerLlm {
     const text = await this.generate(system, user, SUMMARY_SCHEMA);
     if (!text) return null;
     return normalizeSummary(extractJson(text));
+  }
+
+  async generateQuestions(context: string, count: number): Promise<GeneratedQuestion[] | null> {
+    if (context.trim().length < 10) return null;
+    const { system, user } = buildQuestionsPrompt(context, count);
+    const text = await this.generate(system, user, QUESTIONS_SCHEMA, undefined, 0.7);
+    if (!text) return null;
+    return normalizeQuestions(extractJson(text), count);
   }
 
   /** 답변 음성을 직접 듣고 받아 적는다 — 브라우저 인식(80% 안팎)보다 정확하다 */

@@ -4,6 +4,9 @@
  */
 import type { AnswerRecord, Interviewer } from '../types';
 import {
+  buildQuestionsPrompt,
+  normalizeQuestions,
+  type GeneratedQuestion,
   buildEvalPrompt,
   buildSummaryPrompt,
   normalizeSummary,
@@ -100,6 +103,30 @@ export class ClaudeLlm implements InterviewerLlm {
     } catch (err) {
       this.lastError = `Claude 호출 실패: ${err instanceof Error ? err.message : String(err)}`;
       console.warn('[llm:claude]', err);
+      return null;
+    }
+  }
+
+  async generateQuestions(context: string, count: number): Promise<GeneratedQuestion[] | null> {
+    if (context.trim().length < 10) return null;
+    try {
+      const { client, z, zodOutputFormat } = await this.client();
+      const Out = z.object({
+        questions: z.array(z.object({ text: z.string(), keywords: z.array(z.string()), category: z.string() })),
+      });
+      const { system, user } = buildQuestionsPrompt(context, count);
+      const response = await client.messages.parse({
+        model: MODEL,
+        max_tokens: 3000,
+        thinking: { type: 'adaptive' },
+        output_config: { effort: 'low', format: zodOutputFormat(Out) },
+        system,
+        messages: [{ role: 'user', content: user }],
+      });
+      this.lastError = null;
+      return normalizeQuestions(response.parsed_output, count);
+    } catch (err) {
+      this.lastError = `Claude 호출 실패: ${err instanceof Error ? err.message : String(err)}`;
       return null;
     }
   }

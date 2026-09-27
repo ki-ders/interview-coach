@@ -2581,3 +2581,14 @@ textarea.input {
   padding-left: 20px;
   line-height: 1.7;
 }
+
+.jobq {
+  margin-top: 14px;
+}
+
+.jobq textarea.input {
+  resize: vertical;
+  min-height: 110px;
+  line-height: 1.5;
+  font: inherit;
+}
