@@ -130,6 +130,12 @@ export class Tts {
     if (!Ctor) return;
     this.ctx = new Ctor();
     if (this.ctx.state === 'suspended') void this.ctx.resume().catch(() => undefined);
+    // iOS 는 앱 전환 뒤 소리 출력을 잠근다 — 다음 터치·키 입력 때 다시 깨운다
+    const wake = () => {
+      if (this.ctx && this.ctx.state !== 'running') void this.ctx.resume().catch(() => undefined);
+    };
+    window.addEventListener('pointerdown', wake, { passive: true });
+    window.addEventListener('keydown', wake);
   }
 
   /** Gemini 음성을 켠다 (키가 비면 끈다) */
@@ -170,28 +176,40 @@ export class Tts {
     };
     // 합성을 기다리는 동안도 "말하는 중" 으로 두어 마이크가 열리지 않게 한다
     this.speaking = true;
-    // 합성이 너무 오래 걸리면(한도·지연) 포기하고 기기 음성으로
-    let gaveUp = false;
-    const giveUp = window.setTimeout(() => {
-      gaveUp = true;
-    }, 6000);
-
-    void gemini.synthesize(ctx, text, who).then(async (result) => {
-      window.clearTimeout(giveUp);
-      if (cancelled) return finish();
-      if (!result || gaveUp) {
-        // 기기 음성으로 대신 말하고 그 끝을 기다린다
-        if (!this.noticed && gemini.lastError) {
-          this.noticed = true;
-          this.onNotice?.(gemini.lastError);
-        }
-        const fallback = this.speakDevice(text, who);
-        fallbackHandle = fallback;
-        void fallback.started.then(() => g.markStarted());
-        await fallback.done;
-        return finish();
+    /** 기기 음성으로 대신 말하고 그 끝을 기다린다 */
+    const fallbackToDevice = async (reason: string | null) => {
+      if (!this.noticed && reason) {
+        this.noticed = true;
+        this.onNotice?.(reason);
       }
-      if (ctx.state === 'suspended') await ctx.resume().catch(() => undefined);
+      const fallback = this.speakDevice(text, who);
+      fallbackHandle = fallback;
+      void fallback.started.then(() => g.markStarted());
+      await fallback.done;
+      finish();
+    };
+
+    // 합성이 6초 안에 안 오면(한도·지연) 기다리지 않고 기기 음성으로 — 요청은 뒤에서 계속돼 다음에 쓰인다
+    let giveUpTimer = 0;
+    const timeout = new Promise<null>((r) => {
+      giveUpTimer = window.setTimeout(() => r(null), 6000);
+    });
+
+    void Promise.race([gemini.synthesize(ctx, text, who), timeout]).then(async (result) => {
+      window.clearTimeout(giveUpTimer);
+      if (cancelled) return finish();
+      if (!result) {
+        return fallbackToDevice(gemini.lastError ?? 'Gemini 음성 응답이 늦어 이번 문장은 기기 음성으로 말합니다.');
+      }
+      // 오디오 출력이 멈춰 있으면(앱 전환 뒤 등) 깨운다. resume() 은 사용자 조작 없이는 끝나지 않을
+      // 수 있으므로 오래 기다리지 않고, 끝내 안 깨어나면 기기 음성으로 (면접이 멈추지 않게)
+      if (ctx.state !== 'running') {
+        await Promise.race([ctx.resume().catch(() => undefined), new Promise((r) => setTimeout(r, 800))]);
+      }
+      if (cancelled) return finish();
+      if (ctx.state !== 'running') {
+        return fallbackToDevice('소리 출력이 잠겨 있어 기기 음성으로 말합니다. 화면을 한 번 눌러 주면 자연 음성이 돌아옵니다.');
+      }
       const src = ctx.createBufferSource();
       src.buffer = result.buffer;
       src.connect(ctx.destination);

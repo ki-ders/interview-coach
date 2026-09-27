@@ -17,6 +17,11 @@ export interface EvalOpts {
   alreadyFollowedUp: boolean;
   /** 블라인드 면접이면 성명·학교·가족·수상·수험번호 언급도 잡아 달라고 한다 */
   blindMode?: boolean;
+  /**
+   * 답변 음성 원본. 주면 두뇌가 직접 듣고 받아 적은 뒤(transcript) 그 전사로 평가한다 —
+   * 받아쓰기와 평가를 한 번의 요청으로 끝내 무료 한도를 아끼고 기다림도 줄인다.
+   */
+  audio?: { blob: Blob; mimeType: string };
 }
 
 /** LLM 이 답변에서 잡아낸 규정·말씨 문제 */
@@ -38,7 +43,17 @@ export interface LlmVerdict {
   gist: string;
   /** 블라인드 규정 위반·반말·비속어 */
   flags: LlmFlag[];
+  /** 음성을 같이 보냈을 때 두뇌가 받아 적은 답변 */
+  transcript?: string;
 }
+
+/** 평가 요청에 음성을 붙였을 때 시스템 지시에 덧붙이는 문단 */
+export const AUDIO_EVAL_NOTE = [
+  '',
+  '첨부한 음성이 지원자 답변의 원본이다. [지원자 답변] 텍스트는 브라우저 음성 인식 결과라 틀릴 수 있으니 참고만 한다.',
+  '먼저 음성을 들리는 대로 정확히 받아 적어 transcript 에 넣는다 (추임새·반복·말 더듬도 그대로, 문장부호 포함, 다듬거나 존댓말로 고치지 않음, 면접관 목소리는 뺀다).',
+  '평가·꼬리 질문·flags 는 모두 그 전사를 기준으로 한다.',
+].join('\n');
 
 export interface LlmSummary {
   /** 3~4문장 총평 */
@@ -169,6 +184,7 @@ export function normalizeVerdict(raw: unknown): LlmVerdict | null {
     flags: Array.isArray(r.flags)
       ? (r.flags.map((f) => String(f).trim()).filter((f): f is LlmFlag => (LLM_FLAGS as string[]).includes(f)))
       : [],
+    ...(typeof r.transcript === 'string' && r.transcript.trim() ? { transcript: r.transcript.trim().slice(0, 4000) } : {}),
   };
 }
 

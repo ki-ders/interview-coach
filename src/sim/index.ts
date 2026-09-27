@@ -10,6 +10,7 @@ import { Stt } from '../audio/stt';
 import type { Interviewer } from '../types';
 import { createFakeLandmarkers } from './fakeLandmarkers';
 import { FakeLlm } from './fakeLlm';
+import { installMockGemini } from './mockGemini';
 import { createFakeMedia } from './fakeMedia';
 import { AnswerScript, installFakeRecognition } from './fakeRecognition';
 import { getScenario, type Scenario } from './scenarios';
@@ -28,10 +29,11 @@ export interface SimSetup {
 /** 소리는 내지 않고(타이머 경로) 무슨 문장을 말했는지만 세계에 알려주는 TTS */
 class SimTts extends Tts {
   private readonly world: SimWorld;
-  constructor(world: SimWorld) {
+  /** realVoice: Gemini 음성 경로를 실제로 태운다 (가짜 Gemini 로) */
+  constructor(world: SimWorld, realVoice = false) {
     super();
     this.world = world;
-    this.enabled = false;
+    this.enabled = realVoice;
   }
   override speak(text: string, who: Interviewer) {
     this.world.lastLine = text;
@@ -45,7 +47,21 @@ class SimTts extends Tts {
 }
 
 export function createSim(scenarioId: string): SimSetup {
-  const scenario = getScenario(scenarioId);
+  const baseScenario = getScenario(scenarioId);
+  // ?gemini=mock — 진짜 GeminiLlm·GeminiTts 코드를 가짜 API 로 돌린다 (음성·전사·평가·총평 모두)
+  const geminiMock = new URLSearchParams(location.search).get('gemini') === 'mock';
+  const scenario = geminiMock
+    ? {
+        ...baseScenario,
+        config: {
+          ...baseScenario.config,
+          llmProvider: 'gemini' as const,
+          apiKey: 'AIzaSIMULATED_KEY_0000000000000000',
+          naturalVoice: true,
+          accurateStt: true,
+        },
+      }
+    : baseScenario;
   const world = new SimWorld();
   const log: string[] = [];
   const bus = new EventTarget();
@@ -74,12 +90,20 @@ export function createSim(scenarioId: string): SimSetup {
     },
     // 가짜 인식기가 window.SpeechRecognition 에 꽂혀 있으므로 진짜 Stt 클래스를 그대로 쓴다
     createStt: () => new Stt(),
-    createTts: () => new SimTts(world),
+    createTts: () => new SimTts(world, geminiMock),
     // 시나리오가 두뇌를 켜 두면 키 없이 가짜 LLM 으로 흐름을 검증한다
-    createLlm: async (cfg) => (cfg.llmProvider === 'none' ? null : new FakeLlm(say)),
+    createLlm: async (cfg) => {
+      if (cfg.llmProvider === 'none') return null;
+      if (geminiMock) {
+        const { GeminiLlm } = await import('../interview/llmGemini');
+        return new GeminiLlm(cfg.apiKey);
+      }
+      return new FakeLlm(say);
+    },
     recordHistory: false,
   };
 
-  say(`시나리오: ${scenario.name}`);
+  if (geminiMock) installMockGemini(say);
+  say(`시나리오: ${scenario.name}${geminiMock ? ' (가짜 Gemini API 로 실제 Gemini 코드 실행)' : ''}`);
   return { deps, world, scenario, log, bus, Driver: SimDriver };
 }

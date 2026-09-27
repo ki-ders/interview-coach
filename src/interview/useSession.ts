@@ -1105,9 +1105,47 @@ export function useSession(deps: SessionDeps = defaultDeps) {
         let first = await listenForAnswer(asker);
         if (abortRef.current) break;
         let reasked = false;
-        // 정확한 전사가 되면 브라우저 받아쓰기를 그것으로 바꾼다 (되묻기·블라인드·평가 전부 이 텍스트로)
         setAvatars(asker.id, 'writing', 'writing');
-        first = await refineTranscript(first);
+
+        const brain = llmRef.current;
+        const evalOpts = (text: string, audio?: AnswerAudio | null) => ({
+          asker,
+          other,
+          question: q,
+          answer: text,
+          previous: answersRef.current.map((r) => ({ question: r.questionText, answer: r.transcript })),
+          nextQuestion: cfg.questions[i + 1]?.text,
+          alreadyFollowedUp: false,
+          blindMode: cfg.blindMode,
+          audio: audio ? { blob: audio.blob, mimeType: audio.mimeType } : undefined,
+        });
+        /**
+         * Gemini 가 음성을 직접 들을 수 있으면 받아쓰기와 평가를 한 번에 한다 (요청 절반, 기다림 절반).
+         * 전사가 오면 되묻기·블라인드·말씨·채점이 전부 그 텍스트로 이뤄진다.
+         */
+        let early: Awaited<ReturnType<NonNullable<typeof brain>['evaluate']>> = null;
+        let evaluated = false;
+        if (
+          brain?.provider === 'gemini' &&
+          cfg.accurateStt &&
+          first.audio &&
+          !first.skipped &&
+          first.stats.voicedMs >= 1000
+        ) {
+          const [v] = await Promise.all([
+            brain.evaluate(evalOpts(first.text, first.audio)).catch(() => null),
+            sleep(1600 + Math.random() * 1000),
+          ]);
+          evaluated = true;
+          early = v;
+          if (v?.transcript) {
+            first = { ...first, text: v.transcript, clarity: null };
+            patch({ transcript: v.transcript, interim: '' });
+          }
+        } else {
+          // 정확한 전사가 되면 브라우저 받아쓰기를 그것으로 바꾼다 (되묻기·블라인드·평가 전부 이 텍스트로)
+          first = await refineTranscript(first);
+        }
         if (abortRef.current) break;
 
         // 받아쓰기가 못 믿을 정도면 (신뢰도 낮음·인식된 글자가 너무 적음) 한 번 다시 말해 달라고 한다
@@ -1118,7 +1156,12 @@ export function useSession(deps: SessionDeps = defaultDeps) {
           const again = await refineTranscript(await listenForAnswer(asker));
           if (abortRef.current) break;
           // 다시 말한 게 있으면 그걸 답변으로 삼는다 (처음 것은 오인식으로 보고 버린다)
-          if (again.text.trim()) first = { ...again, latencySec: first.latencySec };
+          if (again.text.trim()) {
+            first = { ...again, latencySec: first.latencySec };
+            // 새 답변이니 평가는 다시 한다
+            evaluated = false;
+            early = null;
+          }
         }
         await checkBlind(first.text, i, asker);
         if (abortRef.current) break;
@@ -1138,23 +1181,14 @@ export function useSession(deps: SessionDeps = defaultDeps) {
         /** 꼬리 질문을 누가 던지는지 (LLM 이 옆 면접관에게 넘길 수 있다) */
         let followUpAsker = asker;
 
-        const brain = llmRef.current;
-        const llmPromise =
-          brain && first.text.length > 5
-            ? brain.evaluate({
-                asker,
-                other,
-                question: q,
-                answer: first.text,
-                previous: answersRef.current.map((r) => ({ question: r.questionText, answer: r.transcript })),
-                nextQuestion: cfg.questions[i + 1]?.text,
-                alreadyFollowedUp: false,
-                blindMode: cfg.blindMode,
-              })
+        const llmPromise = evaluated
+          ? Promise.resolve(early)
+          : brain && first.text.length > 5
+            ? brain.evaluate(evalOpts(first.text))
             : Promise.resolve(null);
 
-        // 메모하는 시간 동안 평가가 끝나도록 기다린다
-        const [llm] = await Promise.all([llmPromise, sleep(1600 + Math.random() * 1400)]);
+        // 메모하는 시간 동안 평가가 끝나도록 기다린다 (이미 평가했으면 기다리지 않는다)
+        const [llm] = await Promise.all([llmPromise, sleep(evaluated ? 0 : 1600 + Math.random() * 1400)]);
         if (abortRef.current) break;
 
         let gist = '';

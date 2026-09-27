@@ -5,6 +5,7 @@
  */
 import type { AnswerRecord, Interviewer } from '../types';
 import {
+  AUDIO_EVAL_NOTE,
   buildQuestionsPrompt,
   normalizeQuestions,
   type GeneratedQuestion,
@@ -147,11 +148,33 @@ export class GeminiLlm implements InterviewerLlm {
   }
 
   async evaluate(opts: EvalOpts): Promise<LlmVerdict | null> {
-    if (opts.answer.trim().length < 4) return null;
+    const audio = opts.audio ? await this.audioPart(opts.audio.blob, opts.audio.mimeType) : null;
+    if (!audio && opts.answer.trim().length < 4) return null;
     const { system, user } = buildEvalPrompt(opts);
-    const text = await this.generate(system, user, VERDICT_SCHEMA);
+    const schema = audio
+      ? {
+          ...VERDICT_SCHEMA,
+          properties: { ...VERDICT_SCHEMA.properties, transcript: { type: 'STRING' } },
+          required: [...VERDICT_SCHEMA.required, 'transcript'],
+        }
+      : VERDICT_SCHEMA;
+    const text = await this.generate(audio ? system + AUDIO_EVAL_NOTE : system, user, schema, audio ?? undefined);
     if (!text) return null;
     return normalizeVerdict(extractJson(text));
+  }
+
+  /** 녹음을 16kHz WAV base64 로 (컨테이너마다 지원이 달라 WAV 로 통일). 너무 짧으면 null */
+  private async audioPart(blob: Blob, mimeType: string): Promise<{ mimeType: string; data: string } | null> {
+    if (blob.size < 2000) return null;
+    try {
+      return { mimeType: 'audio/wav', data: await blobToBase64(await toWav16k(blob)) };
+    } catch {
+      try {
+        return { mimeType, data: await blobToBase64(blob) };
+      } catch {
+        return null;
+      }
+    }
   }
 
   async summarize(answers: AnswerRecord[], interviewers: Interviewer[]): Promise<LlmSummary | null> {

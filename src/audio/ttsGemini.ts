@@ -4,6 +4,7 @@
  * 호출부가 기기 음성으로 넘어간다.
  */
 import type { Interviewer } from '../types';
+import { getCachedPcm, putCachedPcm } from './ttsCache';
 
 const BASE = 'https://generativelanguage.googleapis.com/v1beta';
 const MODELS = ['gemini-2.5-flash-tts', 'gemini-2.5-flash-preview-tts', 'gemini-2.5-flash-lite-preview-tts'];
@@ -124,6 +125,13 @@ export class GeminiTts {
   private async request(ctx: AudioContext, text: string, who: Interviewer): Promise<SynthResult | null> {
     if (!this.available) return null;
     const { name, style } = voiceOf(who);
+    // 한 번 만든 문장은 이 브라우저에 남아 있다 — 무료 한도를 쓰지 않는다
+    const diskKey = `${name}|${style}|${text}`;
+    const cached = await getCachedPcm(diskKey);
+    if (cached) {
+      this.everWorked = true;
+      return pcmToBuffer(ctx, new Uint8Array(cached.pcm), cached.rate);
+    }
     for (let attempt = 0; attempt < MODELS.length; attempt++) {
       const ctrl = new AbortController();
       const timer = window.setTimeout(() => ctrl.abort(), TIMEOUT_MS);
@@ -147,9 +155,9 @@ export class GeminiTts {
         const data = (await res.json().catch(() => ({}))) as GeminiAudioResponse;
         if (!res.ok) {
           if (res.status === 429) {
-            // 분당·일일 한도 — 2분 쉬었다가 다시 시도한다. 그동안은 기기 음성
-            this.disabledUntil = performance.now() + 120000;
-            this.lastError = 'Gemini 음성 무료 한도에 걸려 잠시 기기 음성으로 말합니다.';
+            // 한도에 걸리면 이번 면접은 끝까지 기기 음성으로 — 중간에 목소리가 오락가락하면 더 어색하다
+            this.disabledUntil = Infinity;
+            this.lastError = 'Gemini 음성 무료 한도에 걸려 이번 면접은 기기 음성으로 이어갑니다. (한 번 만든 문장은 저장돼 다음부터는 한도를 덜 씁니다)';
           } else {
             this.disabledUntil = performance.now() + 600000;
             this.lastError = `Gemini 음성을 쓸 수 없어 기기 음성으로 말합니다 (${data.error?.message ?? res.status}).`;
@@ -166,7 +174,9 @@ export class GeminiTts {
         const rate = rateMatch ? Number(rateMatch[1]) : SAMPLE_RATE;
         this.everWorked = true;
         this.lastError = null;
-        return pcmToBuffer(ctx, decodeBase64(b64), rate);
+        const bytes = decodeBase64(b64);
+        void putCachedPcm(diskKey, { rate, pcm: bytes.slice().buffer });
+        return pcmToBuffer(ctx, bytes, rate);
       } catch (err) {
         this.lastError =
           err instanceof Error && err.name === 'AbortError'
