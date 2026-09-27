@@ -18,6 +18,8 @@ interface Props {
   guideMode?: 'interviewer' | 'lens';
   /** 이 질문 건너뛰기 */
   onSkip?: () => void;
+  /** 질문 다시 듣기 */
+  onRepeat?: () => void;
   /** 카메라 없이 음성만 */
   audioOnly?: boolean;
 }
@@ -71,6 +73,7 @@ export function InterviewScreen({
   showDebug,
   guideMode = 'lens',
   onSkip,
+  onRepeat,
   audioOnly = false,
 }: Props) {
   const [a, b] = interviewerIds.map(getInterviewer);
@@ -136,6 +139,11 @@ export function InterviewScreen({
                     <span className={state.answerRemainSec <= 15 ? 'warnText' : ''}>
                       남은 시간 {fmt(state.answerRemainSec)}
                     </span>
+                    {onRepeat && (
+                      <button type="button" className="btn btn--ghost btn--sm" onClick={onRepeat}>
+                        질문 다시 듣기
+                      </button>
+                    )}
                     {onSkip && (
                       <button type="button" className="btn btn--ghost btn--sm" onClick={onSkip}>
                         이 질문 건너뛰기

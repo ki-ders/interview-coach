@@ -514,7 +514,18 @@ export function SetupScreen({ onStart }: Props) {
               <a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer">
                 aistudio.google.com/apikey
               </a>{' '}
-              에서 Google 계정으로 무료 키를 만들 수 있습니다 (카드 등록 없음). 답변 텍스트가 Google 로 전송됩니다.
+              에서 Google 계정으로 무료 키를 만들 수 있습니다 (카드 등록 없음).
+              <ol className="keysteps">
+                <li>위 링크를 열고 Google 계정으로 로그인</li>
+                <li>
+                  <b>Create API key</b>(API 키 만들기) 를 눌러 키 생성
+                </li>
+                <li>
+                  <b>AIza</b> 로 시작하는 키를 복사해 아래에 붙여 넣고 <b>연결 테스트</b>
+                </li>
+              </ol>
+              면접 중 답변 텍스트가 Google 로 전송되고, "정확한 받아쓰기" 를 켜면 답변 음성도 전송됩니다. 영상은 보내지
+              않습니다.
             </div>
           )}
           {provider === 'claude' && (

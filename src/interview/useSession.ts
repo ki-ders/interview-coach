@@ -135,6 +135,8 @@ export interface SessionDeps {
   createStt(): SttEngine;
   createTts(): Tts;
   createLlm(config: SessionConfig): Promise<InterviewerLlm | null>;
+  /** 결과를 연습 기록에 남길지 (시뮬레이션은 남기지 않는다) */
+  recordHistory?: boolean;
 }
 
 export const defaultDeps: SessionDeps = {
@@ -244,6 +246,10 @@ export function useSession(deps: SessionDeps = defaultDeps) {
   const blindRef = useRef<BlindViolation[]>([]);
   /** 사용자가 "이 질문 건너뛰기" 를 눌렀다 */
   const skipRef = useRef(false);
+  /** 사용자가 "질문 다시 듣기" 를 눌렀다 */
+  const repeatRef = useRef(false);
+  /** 마지막으로 던진 질문 (다시 들려주기용) */
+  const lastQuestionRef = useRef<{ text: string; who: Interviewer } | null>(null);
   const mannerRef = useRef<MannerHit[]>([]);
   /** 스피커 소리가 마이크로 되돌아온 횟수 — 이어폰 권유 판단 */
   const echoNoticedRef = useRef(false);
@@ -635,6 +641,8 @@ export function useSession(deps: SessionDeps = defaultDeps) {
   const speak = useCallback(
     async (text: string, who: Interviewer, isQuestion = false) => {
       if (abortRef.current) return;
+      // 질문(꼬리 질문 포함)은 기억해 두었다가 "다시 듣기" 에 쓴다
+      if (isQuestion || /[?？]s*$/.test(text)) lastQuestionRef.current = { text, who };
       const stt = sttRef.current;
       stt.gated = true;
       // iOS Safari 는 음성 인식기가 (재)시작될 때 오디오 세션을 녹음 모드로 바꾸면서 재생 중인 소리를
@@ -701,7 +709,7 @@ export function useSession(deps: SessionDeps = defaultDeps) {
       lastUserVoiceRef.current = performance.now();
       answeringRef.current = true;
 
-      const start = performance.now();
+      let start = performance.now();
       answerStartedAtRef.current = start;
       let nudges = 0;
       let lastNudge = start;
@@ -729,6 +737,29 @@ export function useSession(deps: SessionDeps = defaultDeps) {
         if (remain !== lastRemain) {
           lastRemain = remain;
           patch({ answerRemainSec: remain });
+        }
+
+        // 질문을 다시 들려 달라고 했다 — 다시 듣는 시간은 답변 시간에서 빼 준다
+        if (repeatRef.current) {
+          repeatRef.current = false;
+          const q = lastQuestionRef.current;
+          if (q) {
+            const t0 = performance.now();
+            answeringRef.current = false;
+            await speak(q.who.mood === 'stern' ? q.text : `네, 다시 말씀드리겠습니다. ${q.text}`, q.who, true);
+            if (abortRef.current) break;
+            answeringRef.current = true;
+            const spent = performance.now() - t0;
+            start += spent;
+            lastNudge += spent;
+            answerStartedAtRef.current = start;
+            lastUserVoiceRef.current = performance.now();
+            stt.start();
+            openMicSoon();
+            patch({ subtitle: null });
+            setAvatars(asker.id, 'listening', 'writing');
+            continue;
+          }
         }
 
         // 사용자가 직접 넘겼다
@@ -893,7 +924,7 @@ export function useSession(deps: SessionDeps = defaultDeps) {
     };
 
     // 지난 연습과 비교하고 이번 결과를 기록한다
-    {
+    if (deps.recordHistory !== false) {
       const entry = toEntry(report);
       const before = addHistory(entry);
       const cmp = compareWithLast(entry, before);
@@ -930,7 +961,7 @@ export function useSession(deps: SessionDeps = defaultDeps) {
         });
       });
     }
-  }, [patch, releaseMedia]);
+  }, [deps.recordHistory, patch, releaseMedia]);
 
   /* ── 면접 진행 ─────────────────────────────────────────────── */
   const start = useCallback(async () => {
@@ -1242,6 +1273,11 @@ export function useSession(deps: SessionDeps = defaultDeps) {
     if (answeringRef.current) skipRef.current = true;
   }, []);
 
+  /** 방금 질문을 다시 들려준다 (못 들었을 때) */
+  const repeatQuestion = useCallback(() => {
+    if (answeringRef.current) repeatRef.current = true;
+  }, []);
+
   const abort = useCallback(() => {
     abortRef.current = true;
     speakHandleRef.current?.cancel();
@@ -1261,7 +1297,7 @@ export function useSession(deps: SessionDeps = defaultDeps) {
     if (mountedRef.current) setState(initialState());
   }, [teardown]);
 
-  return { state, videoRef, prepare, runCalibration, start, abort, reset, skipQuestion };
+  return { state, videoRef, prepare, runCalibration, start, abort, reset, skipQuestion, repeatQuestion };
 }
 
 /* ── 헬퍼 ─────────────────────────────────────────────────────── */

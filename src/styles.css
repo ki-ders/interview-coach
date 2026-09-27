@@ -2575,3 +2575,9 @@ textarea.input {
   gap: 14px;
   flex-wrap: wrap;
 }
+
+.keysteps {
+  margin: 6px 0 6px;
+  padding-left: 20px;
+  line-height: 1.7;
+}

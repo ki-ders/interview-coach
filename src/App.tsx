@@ -12,7 +12,7 @@ const THEME_LABEL = { light: '라이트', dark: '다크', system: '시스템' } 
 
 export default function App({ sim }: { sim?: SimSetup }) {
   const { mode, cycle } = useTheme();
-  const { state, videoRef, prepare, runCalibration, start, abort, reset, skipQuestion } = useSession(sim?.deps);
+  const { state, videoRef, prepare, runCalibration, start, abort, reset, skipQuestion, repeatQuestion } = useSession(sim?.deps);
   const [config, setConfig] = useState<SessionConfig | null>(null);
   const [showDebug, setShowDebug] = useState(
     () => new URLSearchParams(location.search).get('debug') === '1',
@@ -145,6 +145,7 @@ export default function App({ sim }: { sim?: SimSetup }) {
           guideMode={config?.gazeGuide ?? 'lens'}
           audioOnly={state.audioOnly}
           onSkip={skipQuestion}
+          onRepeat={repeatQuestion}
         />
       )}
 

@@ -77,6 +77,7 @@ export function createSim(scenarioId: string): SimSetup {
     createTts: () => new SimTts(world),
     // 시나리오가 두뇌를 켜 두면 키 없이 가짜 LLM 으로 흐름을 검증한다
     createLlm: async (cfg) => (cfg.llmProvider === 'none' ? null : new FakeLlm(say)),
+    recordHistory: false,
   };
 
   say(`시나리오: ${scenario.name}`);
