@@ -114,6 +114,8 @@ export interface SessionState {
   video: { url: string; mimeType: string; sizeBytes: number; durationMs: number } | null;
   /** 보정·준비 단계의 자세 안내 (비어 있으면 양호) */
   postureHints: string[];
+  /** 지금 답변에 남은 시간(초). 듣는 중이 아니면 null */
+  answerRemainSec: number | null;
 }
 
 const INITIAL_LIVE: LiveMetrics = { gaze: 70, gesture: 70, speech: 70, voice: 70, calm: 70 };
@@ -167,6 +169,7 @@ const initialState = (): SessionState => ({
   mannerHits: [],
   video: null,
   postureHints: [],
+  answerRemainSec: null,
 });
 
 export function useSession(deps: SessionDeps = defaultDeps) {
@@ -230,6 +233,8 @@ export function useSession(deps: SessionDeps = defaultDeps) {
   const answersRef = useRef<AnswerRecord[]>([]);
   const speakHandleRef = useRef<{ cancel(): void } | null>(null);
   const blindRef = useRef<BlindViolation[]>([]);
+  /** 사용자가 "이 질문 건너뛰기" 를 눌렀다 */
+  const skipRef = useRef(false);
   const mannerRef = useRef<MannerHit[]>([]);
   /** 스피커 소리가 마이크로 되돌아온 횟수 — 이어폰 권유 판단 */
   const echoNoticedRef = useRef(false);
@@ -635,6 +640,8 @@ export function useSession(deps: SessionDeps = defaultDeps) {
       latencySec: number;
       clarity: number | null;
       cutOff: boolean;
+      /** 사용자가 직접 넘겼다 — 되묻지 않는다 */
+      skipped: boolean;
       audio: AnswerAudio | null;
     }> => {
       const cfg = configRef.current!;
@@ -667,12 +674,29 @@ export function useSession(deps: SessionDeps = defaultDeps) {
       let guideBackAt = 0;
       /** 최대 답변 시간에 걸려 면접관이 끊었는지 */
       let cutOff = false;
+      let lastRemain = -1;
+      let skipped = false;
+      skipRef.current = false;
 
       while (!abortRef.current) {
         await sleep(200);
         const now = performance.now();
         const elapsed = (now - start) / 1000;
         const sinceVoice = (now - lastUserVoiceRef.current) / 1000;
+
+        // 남은 시간 (1초 단위로만 갱신해 불필요한 렌더를 줄인다)
+        const remain = Math.max(0, Math.ceil(cfg.maxAnswerSec - elapsed));
+        if (remain !== lastRemain) {
+          lastRemain = remain;
+          patch({ answerRemainSec: remain });
+        }
+
+        // 사용자가 직접 넘겼다
+        if (skipRef.current) {
+          skipRef.current = false;
+          skipped = true;
+          break;
+        }
 
         if (elapsed > cfg.maxAnswerSec) {
           cutOff = heardSpeechRef.current;
@@ -740,6 +764,7 @@ export function useSession(deps: SessionDeps = defaultDeps) {
 
       answeringRef.current = false;
       answerStatsRef.current = null;
+      patch({ answerRemainSec: null });
       stt.stop();
       sealStats(stats);
       const durationSec = (performance.now() - start) / 1000;
@@ -752,7 +777,7 @@ export function useSession(deps: SessionDeps = defaultDeps) {
         // 실제 면접처럼 시간이 다 되면 말을 끊는다
         await speak(asker.mood === 'stern' ? '시간 관계상 여기까지 듣겠습니다.' : '네, 시간 관계상 여기까지 듣겠습니다. 감사합니다.', asker);
       }
-      return { text, stats, durationSec, latencySec, clarity: stt.lastTurnConfidence, cutOff, audio };
+      return { text, stats, durationSec, latencySec, clarity: stt.lastTurnConfidence, cutOff, skipped, audio };
     },
     [guide, openMicSoon, patch, setAvatars, speak],
   );
@@ -999,7 +1024,7 @@ export function useSession(deps: SessionDeps = defaultDeps) {
 
         // 받아쓰기가 못 믿을 정도면 (신뢰도 낮음·인식된 글자가 너무 적음) 한 번 다시 말해 달라고 한다
         const clarity = judgeIntelligibility({ text: first.text, confidence: first.clarity, voicedSec: first.stats.voicedMs / 1000 });
-        if (clarity.unclear && first.text.trim()) {
+        if (!first.skipped && clarity.unclear && first.text.trim()) {
           reasked = true;
           await speak(reaskLineOf(asker), asker);
           const again = await refineTranscript(await listenForAnswer(asker));
@@ -1069,8 +1094,10 @@ export function useSession(deps: SessionDeps = defaultDeps) {
           if (abortRef.current) break;
         }
 
+        // 사용자가 직접 넘겼으면 되묻지 않는다 (할 말이 없어서 넘긴 것이다)
+        if (first.skipped) followUpText = null;
         // 한마디도 없었으면 되물어도 소용없다 — 그냥 다음 질문으로
-        if (!followUpText && cfg.allowFollowUps && first.text.trim().length > 0) {
+        if (!first.skipped && !followUpText && cfg.allowFollowUps && first.text.trim().length > 0) {
           const decision = decideFollowUp(asker, q, relevance, speech, false);
           followUpText = decision.text;
           followUpReason = decision.reason || null;
@@ -1136,7 +1163,14 @@ export function useSession(deps: SessionDeps = defaultDeps) {
         if (!abortRef.current) {
           setAvatars(asker.id, 'nodding');
           // 한마디도 없었는데 "잘 들었습니다" 라고 하면 이상하다
-          await speak(mergedText.trim() ? ackOf(asker) : '네, 그럼 다음 질문으로 넘어가겠습니다.', asker);
+          await speak(
+            first.skipped
+              ? '네, 그럼 다음 질문으로 넘어가겠습니다.'
+              : mergedText.trim()
+                ? ackOf(asker)
+                : '네, 그럼 다음 질문으로 넘어가겠습니다.',
+            asker,
+          );
         }
       }
 
@@ -1145,6 +1179,11 @@ export function useSession(deps: SessionDeps = defaultDeps) {
       void finish();
     }
   }, [finish, listenForAnswer, patch, setAvatars, speak]);
+
+  /** 이 질문에 대한 답변을 여기서 끝낸다 (생각이 안 날 때 사용자가 직접) */
+  const skipQuestion = useCallback(() => {
+    if (answeringRef.current) skipRef.current = true;
+  }, []);
 
   const abort = useCallback(() => {
     abortRef.current = true;
@@ -1164,7 +1203,7 @@ export function useSession(deps: SessionDeps = defaultDeps) {
     if (mountedRef.current) setState(initialState());
   }, [teardown]);
 
-  return { state, videoRef, prepare, runCalibration, start, abort, reset };
+  return { state, videoRef, prepare, runCalibration, start, abort, reset, skipQuestion };
 }
 
 /* ── 헬퍼 ─────────────────────────────────────────────────────── */

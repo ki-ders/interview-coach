@@ -16,6 +16,8 @@ interface Props {
   showDebug: boolean;
   /** 시선 기준 (설정값) */
   guideMode?: 'interviewer' | 'lens';
+  /** 이 질문 건너뛰기 */
+  onSkip?: () => void;
 }
 
 const ORDER: MetricKey[] = ['gaze', 'gesture', 'speech', 'voice', 'calm'];
@@ -66,6 +68,7 @@ export function InterviewScreen({
   onReset,
   showDebug,
   guideMode = 'lens',
+  onSkip,
 }: Props) {
   const [a, b] = interviewerIds.map(getInterviewer);
   const running = state.phase === 'running';
@@ -124,6 +127,18 @@ export function InterviewScreen({
                     ? (state.turnHint ?? '답변해 주세요 — 말을 멈추면 다음으로 넘어갑니다')
                     : '준비되면 시작하세요'}
                 </span>
+                {running && state.answerRemainSec !== null && (
+                  <span className="subtitle__meta">
+                    <span className={state.answerRemainSec <= 15 ? 'warnText' : ''}>
+                      남은 시간 {fmt(state.answerRemainSec)}
+                    </span>
+                    {onSkip && (
+                      <button type="button" className="btn btn--ghost btn--sm" onClick={onSkip}>
+                        이 질문 건너뛰기
+                      </button>
+                    )}
+                  </span>
+                )}
               </div>
             )}
           </div>

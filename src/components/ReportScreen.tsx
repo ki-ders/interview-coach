@@ -35,6 +35,55 @@ function fmtDuration(sec: number) {
   return m > 0 ? `${m}분 ${s}초` : `${s}초`;
 }
 
+/**
+ * 리포트 맨 위의 실행 계획. 점수만 보고 끝내지 않도록, 가장 낮은 항목의 조언과
+ * 내용 평가에서 가장 약했던 답변을 묶어 "다음에 할 일" 세 가지로 보여준다.
+ */
+function ActionPlan({ report }: { report: SessionReport }) {
+  const items: string[] = [];
+  if (report.blind?.disqualified) {
+    items.push('블라인드 규정을 지키세요 — 성명·학교·가족·수상·수험번호는 말하지 않습니다. 실제 면접이었다면 이 한 가지로 탈락입니다.');
+  }
+  if (report.manner && report.manner.penalty > 0) {
+    items.push('문장 끝을 "~습니다 / ~요" 로 닫으세요. 반말·비속어는 내용과 무관하게 바로 감점입니다.');
+  }
+  // 점수가 낮은 항목의 조언부터
+  for (const m of [...report.breakdown].sort((a, b) => a.score - b.score)) {
+    if (items.length >= 3) break;
+    if (m.score >= 78) continue;
+    const tip = m.tips[0];
+    if (tip) items.push(`${m.label} ${m.score}점 — ${tip}`);
+  }
+  // 그래도 모자라면 내용에서 가장 약했던 답변
+  if (items.length < 3 && report.content.perAnswer.length) {
+    const worst = [...report.content.perAnswer].sort((a, b) => a.relevance - b.relevance)[0];
+    if (worst && worst.relevance < 70) items.push(`"${worst.question}" — ${worst.note}`);
+  }
+  if (!items.length) {
+    items.push('전 항목이 기준 안입니다. 같은 질문을 다른 사례로 한 번 더 연습해 답변의 폭을 넓혀 보세요.');
+  }
+
+  return (
+    <section className="card card__pad plan">
+      <div className="section-title">
+        <h2>다음 연습까지 고칠 것</h2>
+        <span className="tiny faint">가장 점수가 낮은 것부터</span>
+      </div>
+      <ol className="plan__list">
+        {items.slice(0, 3).map((t, i) => (
+          <li key={i}>{t}</li>
+        ))}
+      </ol>
+    </section>
+  );
+}
+
+function scoreColor(score: number) {
+  if (score >= 75) return 'var(--good)';
+  if (score >= 50) return 'var(--warn)';
+  return 'var(--bad)';
+}
+
 function verdictOf(score: number) {
   if (score >= 85) return '아주 좋습니다';
   if (score >= 70) return '무난합니다';
@@ -96,6 +145,8 @@ export function ReportScreen({ report, onRestart, summaryPending, video }: Props
         )}
       </section>
 
+      <ActionPlan report={report} />
+
       {report.blind && (
         <section className={report.blind.disqualified ? 'blind-box' : 'card card__pad'}>
           <h3 style={{ fontSize: 15, marginBottom: 8 }}>
@@ -142,7 +193,9 @@ export function ReportScreen({ report, onRestart, summaryPending, video }: Props
       <section className="stack" style={{ gap: 14 }}>
         <div className="section-title">
           <h2>항목별 평가</h2>
-          <span className="tiny faint">각 줄의 "기준" 이 만점 구간입니다 — 무엇으로 채점했는지 숨기지 않습니다</span>
+          <span className="tiny faint">
+            각 줄의 "만점" 이 100점 구간입니다. 초록 = 그 구간 안, 노랑·빨강 = 벗어남
+          </span>
         </div>
         <div className="metric-grid">
           {report.breakdown.map((m) => (
@@ -152,7 +205,8 @@ export function ReportScreen({ report, onRestart, summaryPending, video }: Props
                   <div style={{ fontWeight: 700 }}>{m.label}</div>
                   <div className="tiny faint">{verdictOf(m.score)}</div>
                 </div>
-                <div className="metric__score" style={{ color: LINE_COLOR[m.key] }}>
+                <div className="metric__score" style={{ color: scoreColor(m.score) }}>
+                  <i className="metric__dot" style={{ background: LINE_COLOR[m.key] }} />
                   {m.score}
                 </div>
               </div>
@@ -164,7 +218,7 @@ export function ReportScreen({ report, onRestart, summaryPending, video }: Props
                   <div className="metric__row" key={d.label}>
                     <span className="muted">
                       {d.label}
-                      {d.target && <span className="metric__target">기준 {d.target}</span>}
+                      {d.target && <span className="metric__target">만점 {d.target}</span>}
                     </span>
                     <span className={`verdict verdict--${d.verdict}`}>{d.value}</span>
                   </div>
@@ -389,6 +443,12 @@ function downloadReport(report: SessionReport) {
     '',
     '── 항목별 평가 ──',
   ];
+  const worstTips = [...report.breakdown]
+    .sort((a, b) => a.score - b.score)
+    .filter((m) => m.score < 78 && m.tips.length)
+    .slice(0, 3)
+    .map((m) => `  ${m.label} ${m.score}점 — ${m.tips[0]}`);
+  if (worstTips.length) lines.splice(2, 0, '', '── 다음 연습까지 고칠 것 ──', ...worstTips);
   if (report.manner && report.manner.penalty > 0) {
     lines.splice(2, 0, `말씨: 반말 ${report.manner.banmal}회 · 비속어 ${report.manner.profanity}회 (총점 -${report.manner.penalty})`);
   }

@@ -145,10 +145,20 @@ export function SetupScreen({ onStart }: Props) {
     });
   };
 
-  const choosePack = (id: string) => {
+  /** 이 묶음에서 몇 문항을 쓸지 (앞에서부터). 0 = 전체 */
+  const [count, setCount] = useState(0);
+
+  const choosePack = (id: string, n = count) => {
     setPackId(id);
     const pack = QUESTION_PACKS.find((p) => p.id === id);
-    if (pack) setQuestions(pack.questions);
+    if (pack) setQuestions(n > 0 ? pack.questions.slice(0, n) : pack.questions);
+  };
+
+  const chooseCount = (n: number) => {
+    setCount(n);
+    const pack = QUESTION_PACKS.find((p) => p.id === packId);
+    // 직접 편집한 목록은 건드리지 않는다
+    if (pack) setQuestions(n > 0 ? pack.questions.slice(0, n) : pack.questions);
   };
 
   const addQuestion = () => {
@@ -244,6 +254,27 @@ export function SetupScreen({ onStart }: Props) {
             </button>
           ))}
           {packId === 'custom' && <span className="pack pack--on">직접 편집됨</span>}
+        </div>
+
+        <div className="pack-row" style={{ marginTop: 8 }}>
+          <span className="tiny faint" style={{ alignSelf: 'center', marginRight: 2 }}>
+            길이
+          </span>
+          {[
+            { n: 3, label: '짧게 3문항' },
+            { n: 5, label: '보통 5문항' },
+            { n: 0, label: '전체' },
+          ].map((o) => (
+            <button
+              key={o.n}
+              type="button"
+              className={`pack${count === o.n && packId !== 'custom' ? ' pack--on' : ''}`}
+              onClick={() => chooseCount(o.n)}
+              disabled={packId === 'custom'}
+            >
+              {o.label}
+            </button>
+          ))}
         </div>
 
         <div className="qlist">

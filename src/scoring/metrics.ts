@@ -437,6 +437,11 @@ interface DetailSpec {
   label: string;
   value: string;
   score: number;
+  /**
+   * 값이 "만점 기준" 안에 있는지. 색(verdict)은 이 값을 따른다 —
+   * 기준을 적어 놓고 기준 밖인데 초록으로 보이면 사용자가 채점을 믿을 수 없다.
+   */
+  ok?: boolean;
   /** 이 지표가 'bad' 일 때 총평 문장 (없으면 총평 후보에서 제외) */
   issue?: string;
 }
@@ -485,8 +490,15 @@ const TARGETS: Record<string, string> = {
   '손 만지작거림': '0.12 이하',
 };
 
+/** 기준 안이면 good, 기준 밖이면 점수에 따라 warn/bad (good 으로는 올라가지 않는다) */
+function verdictOf(spec: DetailSpec): Verdict {
+  if (spec.ok === undefined) return v(spec.score);
+  if (spec.ok) return 'good';
+  return spec.score >= 50 ? 'warn' : 'bad';
+}
+
 const toDetails = (specs: DetailSpec[]): MetricBreakdown['details'] =>
-  specs.map((s) => ({ label: s.label, value: s.value, verdict: v(s.score), target: TARGETS[s.label] }));
+  specs.map((s) => ({ label: s.label, value: s.value, verdict: verdictOf(s), target: TARGETS[s.label] }));
 
 export function buildBreakdown(d: DerivedStats, t: TextStats, m: LiveMetrics): MetricBreakdown[] {
   const out: MetricBreakdown[] = [];
@@ -497,6 +509,7 @@ export function buildBreakdown(d: DerivedStats, t: TextStats, m: LiveMetrics): M
       label: '기준점 응시 비율',
       value: pct(d.onTargetRatio),
       score: bandScore(d.onTargetRatio, { ideal: [0.6, 0.93], zero: [0.3, 1.5] }),
+      ok: d.onTargetRatio >= 0.6 && d.onTargetRatio <= 0.93,
       issue:
         d.onTargetRatio > 0.93
           ? '한 곳만 계속 응시해 다소 경직돼 보였습니다.'
@@ -506,18 +519,21 @@ export function buildBreakdown(d: DerivedStats, t: TextStats, m: LiveMetrics): M
       label: '아래를 본 비율',
       value: pct(d.downRatio),
       score: lowerBetter(d.downRatio, 0.08, 0.45),
+      ok: d.downRatio <= 0.08,
       issue: '시선이 아래로 내려가 있는 시간이 길었습니다.',
     },
     {
       label: '시선 흔들림',
       value: d.gazeStd.toFixed(2),
       score: lowerBetter(d.gazeStd, 0.2, 0.85),
+      ok: d.gazeStd <= 0.2,
       issue: '시선이 좌우로 흔들렸습니다.',
     },
     {
       label: '분당 눈 깜빡임',
       value: `${Math.round(d.blinkPerMin)}회`,
       score: bandScore(d.blinkPerMin, { ideal: [8, 26], zero: [1, 60] }),
+      ok: d.blinkPerMin >= 8 && d.blinkPerMin <= 26,
       issue: d.blinkPerMin > 26 ? '눈을 자주 깜빡여 긴장한 인상을 줬습니다.' : '눈을 거의 깜빡이지 않아 경직돼 보였습니다.',
     },
   ];
@@ -539,30 +555,35 @@ export function buildBreakdown(d: DerivedStats, t: TextStats, m: LiveMetrics): M
       label: '어깨 기울기',
       value: `${d.tiltAvg.toFixed(1)}°`,
       score: lowerBetter(d.tiltAvg, 3, 14),
+      ok: d.tiltAvg <= 3,
       issue: '어깨가 한쪽으로 기울어 있었습니다.',
     },
     {
       label: '상체 자세',
       value: d.neckAvg < 0.75 ? '움츠림' : d.neckAvg > 1.35 ? '목 내밈' : '양호',
       score: bandScore(d.neckAvg, { ideal: [0.75, 1.35], zero: [0.3, 2.0] }),
+      ok: d.neckAvg >= 0.75 && d.neckAvg <= 1.35,
       issue: d.neckAvg < 0.75 ? '어깨가 올라가고 목이 움츠러들어 있었습니다.' : '목을 앞으로 내민 자세가 오래 이어졌습니다.',
     },
     {
       label: '몸 흔들림',
       value: d.swayAvg < 0.02 ? '거의 없음' : d.swayAvg > 0.22 ? '과함' : '적당',
       score: bandScore(d.swayAvg, { ideal: [0.02, 0.22], zero: [-0.02, 1.1] }),
+      ok: d.swayAvg >= 0.02 && d.swayAvg <= 0.22,
       issue: d.swayAvg > 0.22 ? '상체가 계속 움직여 산만해 보였습니다.' : '상체가 거의 움직이지 않아 경직돼 보였습니다.',
     },
     {
       label: '손동작',
       value: d.handAvg < 0.05 ? '거의 없음' : d.handAvg > 0.7 ? '산만함' : '적당',
       score: bandScore(d.handAvg, { ideal: [0.05, 0.7], zero: [-0.06, 2.6] }),
+      ok: d.handAvg >= 0.05 && d.handAvg <= 0.7,
       issue: d.handAvg > 0.7 ? '손동작이 많아 산만해 보였습니다.' : '손이 거의 움직이지 않아 경직돼 보였습니다.',
     },
     {
       label: '얼굴·머리 만지기',
       value: pct(d.selfTouchRatio),
       score: lowerBetter(d.selfTouchRatio, 0.03, 0.3),
+      ok: d.selfTouchRatio <= 0.03,
       issue: '얼굴이나 머리를 만지는 습관이 자주 보였습니다.',
     },
   ];
@@ -583,18 +604,21 @@ export function buildBreakdown(d: DerivedStats, t: TextStats, m: LiveMetrics): M
       label: '긴 침묵 (분당)',
       value: `${d.longPausePerMin.toFixed(1)}회`,
       score: lowerBetter(d.longPausePerMin, 1.2, 8),
+      ok: d.longPausePerMin <= 1.2,
       issue: '말이 자주 막혔습니다. 문장을 짧게 끊어 말해보세요.',
     },
     {
       label: '짧은 멈춤 (분당)',
       value: `${d.pausePerMin.toFixed(1)}회`,
       score: lowerBetter(d.pausePerMin, 6, 22),
+      ok: d.pausePerMin <= 6,
       issue: '말의 흐름이 자주 끊겼습니다.',
     },
     {
       label: '실제 발화 비율',
       value: pct(d.voiceRatio),
       score: bandScore(d.voiceRatio, { ideal: [0.55, 0.92], zero: [0.15, 1.05] }),
+      ok: d.voiceRatio >= 0.55 && d.voiceRatio <= 0.92,
       issue:
         d.voiceRatio < 0.55
           ? '답변 시간의 상당 부분이 침묵이었습니다. 짧게라도 말을 이어가는 것이 낫습니다.'
@@ -607,30 +631,35 @@ export function buildBreakdown(d: DerivedStats, t: TextStats, m: LiveMetrics): M
         label: '답변 시작까지',
         value: `${t.startDelaySec.toFixed(1)}초`,
         score: lowerBetter(t.startDelaySec, 3, 12),
+        ok: t.startDelaySec <= 3,
         issue: '질문을 받고 답변을 시작하기까지 오래 걸렸습니다. 첫 문장을 먼저 정해 두세요.',
       },
       {
         label: '말 속도',
         value: `${t.syllablesPerSec.toFixed(1)} 음절/초`,
         score: bandScore(t.syllablesPerSec, { ideal: [3.8, 6.2], zero: [1.3, 9.8] }),
+        ok: t.syllablesPerSec >= 3.8 && t.syllablesPerSec <= 6.2,
         issue: t.syllablesPerSec > 6.2 ? '말이 다소 빨랐습니다.' : '말이 다소 느렸습니다.',
       },
       {
         label: '간투사 비율',
         value: pct(t.fillerRatio),
         score: lowerBetter(t.fillerRatio, 0.03, 0.18),
+        ok: t.fillerRatio <= 0.03,
         issue: '"어, 음, 그" 같은 간투사가 많았습니다.',
       },
       {
         label: '더듬은 횟수 (100어절당)',
         value: `${t.stutterPer100.toFixed(1)}회`,
         score: lowerBetter(t.stutterPer100, 1, 9),
+        ok: t.stutterPer100 <= 1,
         issue: '같은 말을 반복하거나 더듬는 경우가 잦았습니다.',
       },
       {
         label: '문장 마무리',
         value: pct(t.sentenceEndRatio),
         score: higherBetter(t.sentenceEndRatio, 0.3, 0.85),
+        ok: t.sentenceEndRatio >= 0.85,
         issue: '문장을 끝맺지 않고 흐리는 경우가 많았습니다.',
       },
     );
@@ -639,6 +668,7 @@ export function buildBreakdown(d: DerivedStats, t: TextStats, m: LiveMetrics): M
         label: '또박또박함 (인식 신뢰도)',
         value: pct(t.clarity),
         score: higherBetter(t.clarity, 0.55, 0.92),
+        ok: t.clarity >= 0.92,
         issue: '발음이 뭉개져 인식기가 자신 없게 받아 적었습니다. 입을 크게 벌리고 문장 끝까지 힘을 유지하세요.',
       });
     }
@@ -658,24 +688,28 @@ export function buildBreakdown(d: DerivedStats, t: TextStats, m: LiveMetrics): M
       label: '평균 성량 (소음 대비)',
       value: `+${d.snrAvg.toFixed(1)} dB`,
       score: higherBetter(d.snrAvg, 9, 24),
+      ok: d.snrAvg >= 24,
       issue: d.snrAvg < 12 ? '목소리가 배경 소음에 묻힐 정도로 작았습니다.' : '성량이 조금 부족했습니다.',
     },
     {
       label: '작게 말한 비율',
       value: pct(d.weakRatio),
       score: lowerBetter(d.weakRatio, 0.12, 0.6),
+      ok: d.weakRatio <= 0.12,
       issue: '작게 말한 구간이 많았습니다.',
     },
     {
       label: '성량 기복',
       value: `${d.snrStd.toFixed(1)} dB`,
       score: lowerBetter(d.snrStd, 6, 16),
+      ok: d.snrStd <= 6,
       issue: '성량이 들쭉날쭉했습니다.',
     },
     {
       label: '말끝 흐림',
       value: `${d.trailingDrop.toFixed(1)} dB`,
       score: lowerBetter(d.trailingDrop, 2.5, 10),
+      ok: d.trailingDrop <= 2.5,
       issue: '문장 끝에서 목소리가 눈에 띄게 작아졌습니다.',
     },
   ];
@@ -696,24 +730,28 @@ export function buildBreakdown(d: DerivedStats, t: TextStats, m: LiveMetrics): M
       label: '다리 떨림 시간',
       value: pct(d.legShakeRatio),
       score: lowerBetter(d.legShakeRatio, 0.04, 0.4),
+      ok: d.legShakeRatio <= 0.04,
       issue: '다리 떨림이 반복적으로 감지됐습니다.',
     },
     {
       label: '다리 떨림 강도',
       value: d.legShakeAvg.toFixed(2),
       score: lowerBetter(d.legShakeAvg, 0.1, 0.5),
+      ok: d.legShakeAvg <= 0.1,
       issue: '다리 떨림이 감지됐습니다.',
     },
     {
       label: '손 만지작거림',
       value: d.handFidgetAvg.toFixed(2),
       score: lowerBetter(d.handFidgetAvg, 0.12, 0.5),
+      ok: d.handFidgetAvg <= 0.12,
       issue: '손을 반복적으로 움직이는 모습이 있었습니다.',
     },
     {
       label: '분당 눈 깜빡임',
       value: `${Math.round(d.blinkPerMin)}회`,
       score: bandScore(d.blinkPerMin, { ideal: [8, 28], zero: [1, 65] }),
+      ok: d.blinkPerMin >= 8 && d.blinkPerMin <= 28,
       issue: d.blinkPerMin > 28 ? '눈을 자주 깜빡여 긴장한 인상을 줬습니다.' : undefined,
     },
   ];

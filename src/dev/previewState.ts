@@ -50,5 +50,6 @@ export function makePreviewState(): SessionState {
     mannerHits: [],
     video: null,
     postureHints: [],
+    answerRemainSec: 74,
   };
 }
